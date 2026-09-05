@@ -140,6 +140,9 @@ public struct ContentView: View {
                 } else {
                     Instrument.reading("— cm", size: 11)
                 }
+                Spacer()
+                Instrument.reading(String(format: "%.2f rad/s", tracking.deviceRotationRate), size: 11)
+                    .foregroundStyle(tracking.deviceIsSteady ? Instrument.paperDim : Instrument.warn)
             }
             gazeRow
             blendShapeList

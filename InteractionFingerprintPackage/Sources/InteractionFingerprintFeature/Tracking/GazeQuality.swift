@@ -14,6 +14,7 @@ public enum GazeQuality: Equatable, Sendable {
     case tooClose(Double)
     case tooFar(Double)
     case headTurned(Double)
+    case deviceMoving
     case notCalibrated
     case outsideCalibratedRange(Double)
 
@@ -27,7 +28,7 @@ public enum GazeQuality: Equatable, Sendable {
     public var isUsable: Bool {
         switch self {
         case .good, .notCalibrated, .outsideCalibratedRange: true
-        case .noFace, .blinking, .tooClose, .tooFar, .headTurned: false
+        case .noFace, .blinking, .tooClose, .tooFar, .headTurned, .deviceMoving: false
         }
     }
 
@@ -42,6 +43,7 @@ public enum GazeQuality: Equatable, Sendable {
         case .tooClose: "Hold the phone further away"
         case .tooFar: "Hold the phone closer"
         case .headTurned: "Face the screen straight on"
+        case .deviceMoving: "Hold the phone still"
         case .notCalibrated: "Not calibrated"
         case .outsideCalibratedRange: "Outside the calibrated distance"
         }
@@ -52,10 +54,15 @@ public enum GazeQuality: Equatable, Sendable {
         eyesOpen: Bool,
         distance: Double?,
         headRotation: Double?,
+        deviceIsSteady: Bool = true,
         model: GazeModel?
     ) -> GazeQuality {
         guard isTracked, let distance else { return .noFace }
         if !eyesOpen { return .blinking }
+        // Checked before the geometry tests: while the phone is being moved, ARKit's face
+        // anchor and camera transform disagree and every derived number is unreliable,
+        // including the distance those tests depend on.
+        if !deviceIsSteady { return .deviceMoving }
         if distance < nearLimit { return .tooClose(distance) }
         if distance > farLimit { return .tooFar(distance) }
         if let headRotation, headRotation > maximumHeadRotation { return .headTurned(headRotation) }

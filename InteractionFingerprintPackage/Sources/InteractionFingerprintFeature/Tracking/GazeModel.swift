@@ -16,33 +16,64 @@ public enum GazeSource: String, Codable, Sendable, CaseIterable {
     }
 }
 
-/// Shape of the angular correction.
+/// Shape of the correction.
+///
+/// The `Offset` variants also solve for the camera's true position relative to the
+/// display. That position is a fixed distance, while the eye's own error is a fixed
+/// angle, and the two are only separable when the calibration data spans more than one
+/// viewing distance. Solving for it beats hardcoding a table of camera placements that
+/// would be wrong for every phone not in the table.
 public enum GazeBasis: String, Codable, Sendable, CaseIterable {
-    /// 1, u, v. Corrects a constant angular offset plus scale, skew and mirroring.
+    /// 1, u, v.
     case affine
-    /// 1, u, v, u², v², uv. Also corrects the mild curvature that shows up towards the
-    /// edges of the display.
+    /// 1, u, v, and the camera position.
+    case affineOffset
+    /// 1, u, v, u², v², uv.
     case quadratic
+    /// 1, u, v, u², v², uv, and the camera position.
+    case quadraticOffset
+
+    public var solvesCameraOffset: Bool {
+        self == .affineOffset || self == .quadraticOffset
+    }
+
+    var angularTermCount: Int {
+        switch self {
+        case .affine, .affineOffset: 3
+        case .quadratic, .quadraticOffset: 6
+        }
+    }
 
     public var parameterCount: Int {
-        switch self {
-        case .affine: 3
-        case .quadratic: 6
-        }
+        angularTermCount + (solvesCameraOffset ? 1 : 0)
     }
 
     public var label: String {
         switch self {
         case .affine: "linear"
+        case .affineOffset: "linear + camera"
         case .quadratic: "quadratic"
+        case .quadraticOffset: "quadratic + camera"
         }
     }
 
-    func expand(u: Double, v: Double) -> [Double] {
-        switch self {
-        case .affine: [1, u, v]
-        case .quadratic: [1, u, v, u * u, v * v, u * v]
+    /// The terms that make up the corrected gaze angle.
+    func angularTerms(u: Double, v: Double) -> [Double] {
+        switch angularTermCount {
+        case 6: [1, u, v, u * u, v * v, u * v]
+        default: [1, u, v]
         }
+    }
+
+    /// One row of the fitting matrix.
+    ///
+    /// The camera position enters as a term in one over the distance, which is what makes
+    /// it linear in the unknowns and separable from the angular terms once the data spans
+    /// two distances.
+    func designRow(u: Double, v: Double, distance: Double) -> [Double] {
+        var row = angularTerms(u: u, v: v)
+        if solvesCameraOffset { row.append(-1 / distance) }
+        return row
     }
 }
 
@@ -78,6 +109,9 @@ public struct GazeMeasurement: Sendable, Equatable {
 /// What was captured while one calibration target was on screen.
 public struct GazeCalibrationPoint: Sendable, Equatable {
     public let target: CGPoint
+    /// Which position in the target grid this is. Both viewing distances visit the same
+    /// grid, so this groups the two visits together for cross-validation.
+    public let targetIndex: Int
     public let convergence: GazeMeasurement?
     public let perEye: GazeMeasurement?
     public let headYaw: Double
@@ -85,12 +119,14 @@ public struct GazeCalibrationPoint: Sendable, Equatable {
 
     public init(
         target: CGPoint,
+        targetIndex: Int,
         convergence: GazeMeasurement?,
         perEye: GazeMeasurement?,
         headYaw: Double,
         headPitch: Double
     ) {
         self.target = target
+        self.targetIndex = targetIndex
         self.convergence = convergence
         self.perEye = perEye
         self.headYaw = headYaw
@@ -105,55 +141,56 @@ public struct GazeCalibrationPoint: Sendable, Equatable {
     }
 }
 
-/// A fitted correction from measured gaze angles to true gaze angles.
+/// A fitted correction from measured gaze angles to a position on the display.
 ///
 /// The correction is applied to the *angles*, never to the landing position. A person's
-/// dominant gaze error is the offset between the eye's optical and visual axis, which is
-/// an angle of roughly five degrees and is a fixed property of that person. An angle
-/// lands on the screen scaled by viewing distance, so a correction learned as a distance
-/// on the screen is only valid at the distance it was learned at. Correcting the angle
-/// and then projecting with the eye position measured on the current frame is what lets
-/// the phone be picked up, moved and held differently without the mapping falling apart.
+/// dominant gaze error is the offset between the eye's optical and visual axis, an angle
+/// of roughly five degrees that is a fixed property of that person. An angle lands on the
+/// screen scaled by viewing distance, so a correction stored as a distance on the screen
+/// is only valid at the distance it was learned at.
+///
+/// Separately, `cameraOffset` carries the camera's true position relative to the display,
+/// which is a fixed distance rather than an angle. Keeping the two apart is what lets the
+/// phone be picked up and held differently without the mapping falling apart.
 public struct GazeModel: Codable, Sendable, Equatable {
     public let source: GazeSource
     public let basis: GazeBasis
+    /// Coefficients of the angular correction only.
     public let uCoefficients: [Double]
     public let vCoefficients: [Double]
+    /// Solved camera position relative to the nominal origin, in metres. Zero when the
+    /// basis does not solve for it.
+    public let cameraOffsetX: Double
+    public let cameraOffsetY: Double
     /// Tikhonov strength chosen by cross-validation. Zero means no shrinkage was needed.
     public let ridge: Double
 
-    /// Mean error on targets held out of the fit, in screen points. This is the honest
-    /// accuracy figure. Error measured on the same targets a model was fitted to always
-    /// flatters it.
+    /// Mean error on targets held out of the fit, in screen points, where holding out a
+    /// target removes it at *every* viewing distance. This is the honest accuracy figure:
+    /// error measured on the same targets a model was fitted to always flatters it.
     public let heldOutErrorPoints: Double
     public let worstHeldOutErrorPoints: Double
     public let targetCount: Int
 
-    /// Range of viewing distances seen during calibration, in metres. Used at runtime to
-    /// tell the user when they have drifted outside what was actually measured.
+    /// Range of viewing distances the fit actually saw, in metres.
     public let calibratedDistanceRange: ClosedRange<Double>
-
-    /// Error measured in a separate pass at a deliberately different distance, in points.
-    /// This is the direct test of whether the mapping survives the phone moving.
-    public let distanceCheckErrorPoints: Double?
-    public let distanceCheckDistance: Double?
-
     public let createdAt: Date
 
     public func correct(u: Double, v: Double) -> (u: Double, v: Double) {
-        let terms = basis.expand(u: u, v: v)
+        let terms = basis.angularTerms(u: u, v: v)
         return (
             u: zip(terms, uCoefficients).reduce(0) { $0 + $1.0 * $1.1 },
             v: zip(terms, vCoefficients).reduce(0) { $0 + $1.0 * $1.1 }
         )
     }
 
-    /// Where the corrected gaze lands, in camera-space metres.
+    /// Where the corrected gaze lands, in nominal camera-space metres, with the solved
+    /// camera position already taken out so the result can go straight into `ScreenGeometry`.
     public func screenPlaneHit(for measurement: GazeMeasurement) -> CGPoint {
         let corrected = correct(u: measurement.u, v: measurement.v)
         return CGPoint(
-            x: measurement.eyeX + measurement.distance * corrected.u,
-            y: measurement.eyeY + measurement.distance * corrected.v
+            x: measurement.eyeX + measurement.distance * corrected.u - cameraOffsetX,
+            y: measurement.eyeY + measurement.distance * corrected.v - cameraOffsetY
         )
     }
 
@@ -168,15 +205,17 @@ public struct GazeModel: Codable, Sendable, Equatable {
     public var summary: String {
         String(
             format: "%@ · %@%@ · ±%.0f pt",
-            source.label,
-            basis.label,
-            ridge > 0 ? " · shrunk" : "",
-            heldOutErrorPoints
+            source.label, basis.label, ridge > 0 ? " · shrunk" : "", heldOutErrorPoints
         )
+    }
+
+    /// Solved camera position in millimetres, for the diagnostics readout.
+    public var cameraOffsetMillimetres: (x: Double, y: Double) {
+        (cameraOffsetX * 1000, cameraOffsetY * 1000)
     }
 }
 
-/// Fits the angular correction and chooses between candidate models on held-out error.
+/// Fits the correction and chooses between candidate models on held-out error.
 public enum GazeModelFitter {
 
     public struct Candidate: Sendable {
@@ -185,44 +224,49 @@ public enum GazeModelFitter {
         public let basis: GazeBasis
     }
 
-    /// Fits every combination of gaze source and basis, scores each by leave-one-out
-    /// cross-validation, and returns them best first.
-    ///
-    /// Cross-validation rather than a plain residual, because a quadratic fitted to nine
-    /// points can trace them almost exactly while being worse everywhere else. Leaving
-    /// each target out in turn measures generalisation without asking the participant to
-    /// sit through a second set of targets.
-    /// Shrinkage strengths tried for every model shape. Zero is included so that an
+    /// Shrinkage strengths tried for every model shape. Zero is included so an
     /// unregularised fit can win when the data genuinely supports it.
     static let ridgeGrid: [Double] = [0, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
 
+    /// Minimum spread in one over the distance before the camera position can be solved.
+    /// Roughly six centimetres of movement at normal holding distances.
+    static let minimumInverseDistanceSpread = 0.25
+
+    /// Fits every combination of gaze source, basis shape and shrinkage, scores each by
+    /// cross-validation, and returns them best first.
+    ///
+    /// Validation groups by target position, so holding out a target removes it at every
+    /// distance it was visited. Holding out only one visit would let the model see the
+    /// same screen position at the other distance and score far better than it deserves.
     public static func rank(
         points: [GazeCalibrationPoint],
         geometry: ScreenGeometry
     ) -> [Candidate] {
         var candidates: [Candidate] = []
+        let groups = Set(points.map(\.targetIndex)).sorted()
+        guard groups.count >= 4 else { return [] }
 
         for source in GazeSource.allCases {
             let usable = points.filter { $0.measurement(for: source) != nil }
-            guard usable.count >= 4 else { continue }
-
             let distances = usable.compactMap { $0.measurement(for: source)?.distance }
             guard let low = distances.min(), let high = distances.max() else { continue }
+            let inverseSpread = (1 / low) - (1 / high)
 
             for basis in GazeBasis.allCases {
-                // Leave-one-out removes a point, so the remainder must still over-determine
-                // the fit rather than merely satisfy it.
-                guard usable.count - 1 >= basis.parameterCount + 1 else { continue }
+                // Solving for the camera position needs real distance variation, otherwise
+                // it is indistinguishable from a constant angular offset.
+                if basis.solvesCameraOffset, inverseSpread < minimumInverseDistanceSpread { continue }
+                // Leaving a group out must still leave the fit over-determined.
+                let smallest = groups.count - 1
+                guard usable.count - (usable.count / max(groups.count, 1)) >= basis.parameterCount + 1,
+                      smallest >= 3 else { continue }
 
                 for ridge in ridgeGrid {
                     guard
-                        let coefficients = solve(
-                            points: usable, source: source, basis: basis,
-                            geometry: geometry, ridge: ridge
-                        ),
-                        let score = leaveOneOutError(
-                            points: usable, source: source, basis: basis,
-                            geometry: geometry, ridge: ridge
+                        let solution = solve(points: usable, source: source, basis: basis, geometry: geometry, ridge: ridge),
+                        let score = groupedCrossValidation(
+                            points: usable, groups: groups, source: source,
+                            basis: basis, geometry: geometry, ridge: ridge
                         )
                     else { continue }
 
@@ -231,15 +275,15 @@ public enum GazeModelFitter {
                             model: GazeModel(
                                 source: source,
                                 basis: basis,
-                                uCoefficients: coefficients.u,
-                                vCoefficients: coefficients.v,
+                                uCoefficients: solution.u,
+                                vCoefficients: solution.v,
+                                cameraOffsetX: solution.offsetX,
+                                cameraOffsetY: solution.offsetY,
                                 ridge: ridge,
                                 heldOutErrorPoints: score.mean,
                                 worstHeldOutErrorPoints: score.worst,
                                 targetCount: usable.count,
                                 calibratedDistanceRange: low...high,
-                                distanceCheckErrorPoints: nil,
-                                distanceCheckDistance: nil,
                                 createdAt: Date()
                             ),
                             source: source,
@@ -269,9 +313,9 @@ public enum GazeModelFitter {
 
         for point in points {
             guard let measurement = point.measurement(for: model.source) else { continue }
-            let hit = model.screenPlaneHit(for: measurement)
-            let predicted = geometry.normalised(fromCameraMetres: hit)
+            let predicted = geometry.normalised(fromCameraMetres: model.screenPlaneHit(for: measurement))
             let error = distanceInPoints(predicted, point.target, geometry: geometry)
+            guard error.isFinite else { continue }
             total += error
             worst = max(worst, error)
             count += 1
@@ -283,13 +327,20 @@ public enum GazeModelFitter {
 
     // MARK: Internals
 
-    private static func solve(
+    struct Solution {
+        let u: [Double]
+        let v: [Double]
+        let offsetX: Double
+        let offsetY: Double
+    }
+
+    static func solve(
         points: [GazeCalibrationPoint],
         source: GazeSource,
         basis: GazeBasis,
         geometry: ScreenGeometry,
         ridge: Double
-    ) -> (u: [Double], v: [Double])? {
+    ) -> Solution? {
         var design: [[Double]] = []
         var requiredU: [Double] = []
         var requiredV: [Double] = []
@@ -297,22 +348,33 @@ public enum GazeModelFitter {
         for point in points {
             guard let measurement = point.measurement(for: source) else { continue }
             let targetMetres = geometry.cameraMetres(fromNormalised: point.target)
-            design.append(basis.expand(u: measurement.u, v: measurement.v))
+            design.append(basis.designRow(u: measurement.u, v: measurement.v, distance: measurement.distance))
             requiredU.append((Double(targetMetres.x) - measurement.eyeX) / measurement.distance)
             requiredV.append((Double(targetMetres.y) - measurement.eyeY) / measurement.distance)
         }
 
         guard
-            design.count >= basis.parameterCount,
-            let u = LeastSquares.solve(design: design, observations: requiredU, ridge: ridge),
-            let v = LeastSquares.solve(design: design, observations: requiredV, ridge: ridge)
+            design.count >= basis.parameterCount + 1,
+            var u = LeastSquares.solve(design: design, observations: requiredU, ridge: ridge),
+            var v = LeastSquares.solve(design: design, observations: requiredV, ridge: ridge)
         else { return nil }
 
-        return (u, v)
+        var offsetX = 0.0
+        var offsetY = 0.0
+        if basis.solvesCameraOffset {
+            offsetX = u.removeLast()
+            offsetY = v.removeLast()
+            // A solved camera position more than two centimetres from nominal is not a
+            // camera position, it is the fit absorbing something else.
+            guard abs(offsetX) < 0.02, abs(offsetY) < 0.02 else { return nil }
+        }
+
+        return Solution(u: u, v: v, offsetX: offsetX, offsetY: offsetY)
     }
 
-    private static func leaveOneOutError(
+    private static func groupedCrossValidation(
         points: [GazeCalibrationPoint],
+        groups: [Int],
         source: GazeSource,
         basis: GazeBasis,
         geometry: ScreenGeometry,
@@ -322,32 +384,35 @@ public enum GazeModelFitter {
         var worst = 0.0
         var count = 0
 
-        for index in points.indices {
-            var training = points
-            let heldOut = training.remove(at: index)
-            guard
-                let measurement = heldOut.measurement(for: source),
-                let coefficients = solve(
-                    points: training, source: source, basis: basis,
-                    geometry: geometry, ridge: ridge
-                )
+        for group in groups {
+            let training = points.filter { $0.targetIndex != group }
+            let heldOut = points.filter { $0.targetIndex == group }
+            guard !heldOut.isEmpty,
+                  let solution = solve(
+                      points: training, source: source, basis: basis,
+                      geometry: geometry, ridge: ridge
+                  )
             else { return nil }
 
-            let terms = basis.expand(u: measurement.u, v: measurement.v)
-            let correctedU = zip(terms, coefficients.u).reduce(0) { $0 + $1.0 * $1.1 }
-            let correctedV = zip(terms, coefficients.v).reduce(0) { $0 + $1.0 * $1.1 }
-
-            let hit = CGPoint(
-                x: measurement.eyeX + measurement.distance * correctedU,
-                y: measurement.eyeY + measurement.distance * correctedV
+            let fold = GazeModel(
+                source: source,
+                basis: basis,
+                uCoefficients: solution.u,
+                vCoefficients: solution.v,
+                cameraOffsetX: solution.offsetX,
+                cameraOffsetY: solution.offsetY,
+                ridge: ridge,
+                heldOutErrorPoints: 0,
+                worstHeldOutErrorPoints: 0,
+                targetCount: training.count,
+                calibratedDistanceRange: 0.1...1.0,
+                createdAt: Date()
             )
-            let predicted = geometry.normalised(fromCameraMetres: hit)
-            let error = distanceInPoints(predicted, heldOut.target, geometry: geometry)
-            guard error.isFinite else { return nil }
 
-            total += error
-            worst = max(worst, error)
-            count += 1
+            guard let score = error(of: fold, on: heldOut, geometry: geometry) else { return nil }
+            total += score.mean * Double(heldOut.count)
+            worst = max(worst, score.worst)
+            count += heldOut.count
         }
 
         guard count > 0 else { return nil }
@@ -364,7 +429,7 @@ public enum GazeModelFitter {
 /// Persists the model between launches so a participant is not recalibrated for every
 /// build. Storage moves into the session database with the storage milestone.
 public enum GazeModelStore {
-    private static let key = "interactionFingerprint.gazeModel.v2"
+    private static let key = "interactionFingerprint.gazeModel.v3"
 
     public static func load(from defaults: UserDefaults = .standard) -> GazeModel? {
         guard let data = defaults.data(forKey: key) else { return nil }

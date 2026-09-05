@@ -20,12 +20,17 @@ public struct ScreenGeometry: Sendable, Equatable {
     public let pointSize: CGSize
     public let physicalSize: CGSize
 
-    /// Vertical distance in metres from the camera centre down to the top edge of the
-    /// display. On Face ID iPhones the camera sits in the sensor housing just above the
-    /// usable display area.
+    /// Nominal vertical distance in metres from the camera centre down to the top edge of
+    /// the display.
+    ///
+    /// This is only a starting guess and is deliberately not trusted. On a Dynamic Island
+    /// iPhone the camera sits *inside* the display area, a few millimetres below the top
+    /// edge and offset horizontally, and the exact figure differs by model. Rather than
+    /// carry a hardware table that will be wrong for the next phone, calibration solves
+    /// for the true camera position as part of the fit. See `GazeBasis`.
     public let cameraAboveScreenTop: Double
 
-    public init(pointSize: CGSize, displayScale: Double, cameraAboveScreenTop: Double = 0.006) {
+    public init(pointSize: CGSize, displayScale: Double, cameraAboveScreenTop: Double = 0) {
         self.pointSize = pointSize
         self.cameraAboveScreenTop = cameraAboveScreenTop
 

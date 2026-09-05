@@ -19,7 +19,7 @@ struct CalibrationView: View {
             switch run.phase {
             case .readiness:
                 setupStep
-            case .fitting, .checking:
+            case .near, .far:
                 targetStep
             case .changeDistance:
                 changeDistanceStep
@@ -48,7 +48,7 @@ struct CalibrationView: View {
                     .foregroundStyle(Instrument.paper)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text("Face the screen straight on. Nine circles will appear one at a time. Look at each one and hold still.")
+                Text("Face the screen straight on. Nine circles appear one at a time. Look at each one and hold still. You will then be asked to move the phone and repeat, which is what makes the result hold when you shift position.")
                     .font(.footnote)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(Instrument.paperDim)
@@ -126,7 +126,7 @@ struct CalibrationView: View {
                     .multilineTextAlignment(.center)
                     .foregroundStyle(Instrument.paper)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Four more circles will follow. These are not used to build the calibration. They measure whether it still holds once the phone has moved.")
+                Text("The same nine circles follow at the new distance. Seeing the grid twice is what separates your eye's own offset from where the camera sits, and a single distance cannot tell those apart.")
                     .font(.footnote)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(Instrument.paperDim)
@@ -185,7 +185,7 @@ private struct TargetMarker: View {
 
 /// The measurement, not a verdict.
 private struct ResultsStep: View {
-    let result: GazeCalibrationRun.GazeCalibrationResult
+    let result: GazeCalibrationRun.Result
     let geometry: ScreenGeometry
     let onAccept: (GazeModel) -> Void
     let onRetry: () -> Void
@@ -220,29 +220,21 @@ private struct ResultsStep: View {
             }
             .padding(.top, 20)
 
-            ResidualMapView(
-                model: model,
-                fitPoints: result.fitPoints,
-                checkPoints: result.checkPoints,
-                geometry: geometry
-            )
+            ResidualMapView(model: model, points: result.points, geometry: geometry)
             .frame(maxHeight: 260)
             .padding(.vertical, 18)
 
             VStack(spacing: 7) {
                 row("Worst target", String(format: "%.0f pt", model.worstHeldOutErrorPoints))
-                if let check = model.distanceCheckErrorPoints {
-                    row(
-                        "After moving the phone",
-                        String(format: "%.0f pt", check),
-                        tint: check <= model.heldOutErrorPoints * 2 ? Instrument.paper : Instrument.warn
-                    )
-                }
                 row("Distance", String(
                     format: "%.0f–%.0f cm",
                     model.calibratedDistanceRange.lowerBound * 100,
                     model.calibratedDistanceRange.upperBound * 100
                 ))
+                if model.basis.solvesCameraOffset {
+                    let offset = model.cameraOffsetMillimetres
+                    row("Camera solved at", String(format: "%+.0f, %+.0f mm", offset.x, offset.y))
+                }
                 row("Model", model.summary)
                 if result.failedTargets > 0 {
                     row("Skipped targets", "\(result.failedTargets)", tint: Instrument.warn)

@@ -37,8 +37,12 @@ public final class FaceTrackingSession {
     public private(set) var trackedFrameCount: Int = 0
     public private(set) var measuredHz: Double = 0
 
+    /// Device rotation rate in radians per second, from the gyroscope.
+    public var deviceRotationRate: Double { motion.rotationRate }
+    public var deviceIsSteady: Bool { motion.isSteady }
+
     /// Latest raw measurements, for the calibration run to bank.
-    public private(set) var latestCalibrationSample: GazeCalibrationRun.GazeSampleForCalibration?
+    public private(set) var latestCalibrationSample: GazeCalibrationRun.Sample?
 
     public var trackedShare: Double {
         frameCount == 0 ? 0 : Double(trackedFrameCount) / Double(frameCount)
@@ -53,6 +57,7 @@ public final class FaceTrackingSession {
 
     private let session = ARSession()
     private let proxy = ARSessionProxy()
+    private let motion = DeviceMotionMonitor()
     private var horizontalFilter = OneEuroFilter()
     private var verticalFilter = OneEuroFilter()
     private var hzWindowStart: TimeInterval = 0
@@ -101,6 +106,7 @@ public final class FaceTrackingSession {
         configuration.worldAlignment = .camera
         configuration.isLightEstimationEnabled = false
 
+        motion.start()
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         state = .running
     }
@@ -108,6 +114,7 @@ public final class FaceTrackingSession {
     public func stop() {
         guard state == .running else { return }
         session.pause()
+        motion.stop()
         state = .idle
         displayGaze = nil
     }
@@ -158,10 +165,11 @@ public final class FaceTrackingSession {
             eyesOpen: eyesOpen,
             distance: reference?.distance,
             headRotation: head.offAxisRotation,
+            deviceIsSteady: motion.isSteady,
             model: model
         )
 
-        latestCalibrationSample = GazeCalibrationRun.GazeSampleForCalibration(
+        latestCalibrationSample = GazeCalibrationRun.Sample(
             convergence: convergenceMeasurement,
             perEye: perEyeMeasurement,
             headYaw: head.yaw,
@@ -264,6 +272,7 @@ public final class FaceTrackingSession {
         case .tooClose: "too_close"
         case .tooFar: "too_far"
         case .headTurned: "head_turned"
+        case .deviceMoving: "device_moving"
         case .notCalibrated: "not_calibrated"
         case .outsideCalibratedRange: "outside_calibrated_range"
         }
