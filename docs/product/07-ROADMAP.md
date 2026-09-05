@@ -29,7 +29,11 @@ re-attributed if the region definitions change. Touch contact radius and press d
 scroll velocity and direction reversals, and ambient light are all recorded. Sessions export
 as JSON and newline-delimited JSON.
 
-Not yet verified with a real recording on device. That is the remaining gate.
+First real recording on 5 September 2026: 1,739 events, gapless, 59.9 Hz, 95% of frames
+in the trusted envelope. It exposed two defects, both now fixed and covered by tests: the
+calibration extrapolated its head-pose and quadratic terms and sent half of the gaze off
+the screen, and taps were not recorded at all. See `10-MOTION-FUSION.md` sections 9 and
+10. The gate is a second recording that shows taps and on-screen gaze.
 
 ## Phase 3 — Fingerprint
 Normalize events, derive features, summarize sessions, visualize fingerprints.

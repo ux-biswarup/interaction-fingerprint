@@ -55,6 +55,7 @@ struct ProductListView: View {
                         row(product)
                     }
                     .buttonStyle(CardButtonStyle())
+                    .accessibilityIdentifier("product_\(product.id)")
                     .areaOfInterest(.listItem, on: .productList, productID: product.id)
                 }
             }
@@ -202,6 +203,7 @@ struct ProductDetailView: View {
                     .padding(.horizontal, 12)
                     .contentShape(Rectangle())
                 }
+                .accessibilityIdentifier("back_to_shop")
                 .areaOfInterest(.backButton, on: .productDetail, productID: product.id)
                 Spacer()
             }
@@ -309,6 +311,7 @@ struct ProductDetailView: View {
                 .background(added ? Shop.inkSecondary : Shop.action, in: RoundedRectangle(cornerRadius: 13))
         }
         .buttonStyle(CardButtonStyle())
+        .accessibilityIdentifier("add_to_basket")
         .padding(.horizontal, 18)
         .padding(.top, 18)
         .frame(minHeight: 104, alignment: .top)

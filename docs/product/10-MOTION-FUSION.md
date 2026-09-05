@@ -237,7 +237,100 @@ To check, in this order:
 - **Recalibrate**, then look at the summary line. If it says `+look` the eye-direction blend
   shapes were chosen; if not, they were tried and rejected, and both outcomes are fine.
 
-## 9. What this does not claim
+## 9. What the first recording showed
+
+A 24 second session was recorded on 5 September 2026 with the build described above, after
+a fresh calibration of 69 points (1.78° at 37 cm). The pipeline itself was sound: 1,739
+events, gapless sequence, gaze at 59.9 Hz with no gap above 33 ms, 95% of frames inside
+the trusted envelope, 2.6% flagged as `device_moving`, the tilt and disturbance columns
+present on every row. Two things were badly wrong, and both had been invisible until there
+was a recording to look at.
+
+### Half of the gaze samples were off the screen
+
+| | |
+| --- | --- |
+| Gaze samples landing on the display | 48% |
+| Of the misses, above the top edge | 78% |
+| Of the misses, beyond the right edge | 96% |
+| Median position of a miss, normalised | x 1.72, y −0.28 |
+| Miss rate when the phone was stillest | 61% |
+| Miss rate while the phone was turning fastest | 0% |
+
+The last two rows rule out phone motion as the cause. The misses happened while holding
+still. The cause was in the fitted model. Its coefficients, in the order
+`[1, u, v, u², v², uv, yaw, pitch]`:
+
+```
+u:  0.50   0.56  -16.4  -18.5    70.9  -12.5   3.96  -0.21
+v:  0.84   0.36  -22.7   -6.5   232.7 -117.2   1.05   2.37
+```
+
+The head-pose coefficients were fitted on a head that moved by under two degrees during
+calibration, then evaluated on the ten degrees a head and a hand produce in use. Ten
+degrees of yaw times 3.96 is 0.7 in the gaze ratio, which at 37 cm is 26 cm off the side
+of the screen: x ≈ 1.7. Six degrees of pitch times 2.37 lands 9 cm above the top edge:
+y ≈ −0.3. Those are the observed miss positions. The quadratic terms, with coefficients in
+the hundreds, do the same the moment gaze leaves the calibrated grid.
+
+**This is also the mechanism behind the dot's sensitivity to phone movement.** Head pose
+is measured *relative to the camera*, so turning the phone five degrees changes it by five
+degrees instantly, and the pose terms turn that into a jump of several hundred points. The
+per-frame jump grew from a median of 13 points when the phone was still to 81 points at a
+gentle 0.2 rad/s, exactly as this predicts. The gyroscope was never the cause. It was a
+model with no bounds.
+
+Three changes:
+
+1. **Every model input is bounded at prediction time** to the range seen during
+   calibration, plus a 15% margin. The linear terms are exempt, because an angular model
+   should still be right a little beyond the grid. The curvature, head-pose and eye-shape
+   terms are held at the edge, because outside it they are simply unknown.
+2. **Head-pose terms are only offered when the head actually moved during calibration**,
+   by at least 0.10 rad, about six degrees. Previously 0.03 rad. In practice this means
+   they will rarely be offered, which is correct: a term cannot be learned from data that
+   does not exercise it.
+3. **Every gaze row now carries the raw measurement**: eye position, both gaze angles, head
+   pose. The first recording stored only the screen coordinate, so this diagnosis had to be
+   reconstructed from the coefficients instead of read from the data. The schema promised
+   offline re-mapping; now it can deliver it.
+
+### No taps were recorded
+
+The session contained three product selections and two back-presses, all of which came from
+button actions, and zero tap events. The touch observer sits on the window as a gesture
+recogniser that never leaves the `.possible` state. When a button's own recogniser fires,
+UIKit cancels every other recogniser that has not declared it may recognise simultaneously,
+so the observer's `touchesEnded` never arrived. It now declares simultaneous recognition
+and treats a cancellation as the end of the touch it was. A UI test presses real buttons
+through a real window and checks the exported file, because a unit test of the recorder
+could never have found this.
+
+## 10. Calibration in a product
+
+The question was raised whether calibration can be skipped: a shipping product cannot ask
+every user to walk a grid at two distances.
+
+It cannot be skipped and still measured. The dominant per-person error is the angle between
+the eye's optical and visual axis, about five degrees and different for everyone. Uncorrected,
+ARKit's gaze is accurate to roughly 3° ([published](09-GAZE-ACCURACY.md)), which is two of
+the six regions on a product page. Apple's own Eye Tracking runs a calibration screen on
+first use for the same reason, and every commercial eye tracker does.
+
+What a product can do is calibrate **implicitly**. When a person taps a button they were,
+with near certainty, looking at it a moment before. Each tap therefore supplies a
+(measured gaze angle, true screen position) pair, which is exactly what the calibration
+grid supplies, without asking for anything. The fitter already works on whatever pairs it
+is given, so implicit calibration is a change to where the pairs come from, not to the
+model. A population-average correction can carry the first minute, and the per-person fit
+replaces it as taps accumulate. This depends on taps being recorded, which is why the
+missing-tap bug above matters beyond the dataset.
+
+For the research phase the explicit calibration stays. It is what produces the accuracy
+figure, and gaze without an accuracy figure attached is not evidence. Implicit calibration
+is on the roadmap for the adaptive-interface phase, where it belongs.
+
+## 11. What this does not claim
 
 It does not claim the gyroscope makes gaze more accurate. It cannot; it never sees the eye.
 It claims that the phone's motion is now measured in the quantity and units that matter,

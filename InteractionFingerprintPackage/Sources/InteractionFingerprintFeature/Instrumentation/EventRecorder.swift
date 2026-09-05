@@ -198,11 +198,33 @@ public final class EventRecorder {
             productID: area?.productID,
             x: sample.gazeX,
             y: sample.gazeY,
-            metrics: Self.deviceMetrics(sample.device),
+            metrics: Self.measurementMetrics(sample).merging(Self.deviceMetrics(sample.device)) { a, _ in a },
             eyesOpen: sample.eyesOpen,
             quality: sample.quality,
             signals: sample.signals
         ))
+    }
+
+    /// The physical measurement behind the screen coordinate: eye position, gaze angles
+    /// and head pose. With these on every row a session can be re-mapped offline with a
+    /// better calibration, and a misbehaving model can be diagnosed from the data rather
+    /// than guessed at. The first recording could not be, because only `x` and `y` were
+    /// kept. Keys are documented in `05-DATA-SCHEMA.md`.
+    nonisolated static func measurementMetrics(_ sample: FaceSample) -> [String: Double] {
+        var m: [String: Double] = [:]
+        if let v = sample.eyeX { m["eyeX"] = v }
+        if let v = sample.eyeY { m["eyeY"] = v }
+        if let v = sample.eyeZ { m["eyeZ"] = v }
+        if let v = sample.convergenceU { m["convergenceU"] = v }
+        if let v = sample.convergenceV { m["convergenceV"] = v }
+        if let v = sample.perEyeU { m["perEyeU"] = v }
+        if let v = sample.perEyeV { m["perEyeV"] = v }
+        if let head = sample.head {
+            m["headYawRad"] = head.yaw
+            m["headPitchRad"] = head.pitch
+            m["headRollRad"] = head.roll
+        }
+        return m
     }
 
     /// How the phone was held and moved, carried on every gaze row as a covariate.

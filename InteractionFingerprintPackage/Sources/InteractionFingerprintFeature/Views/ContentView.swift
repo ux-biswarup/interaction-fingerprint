@@ -14,6 +14,7 @@ public struct ContentView: View {
     @State private var lastExport: SessionExporter.Export?
     @State private var cameraStatus = CameraAuthorization.statusDescription
     @State private var viewport: CGSize = .zero
+    @State private var previewSummary: String?
     @Environment(\.displayScale) private var displayScale
     @Environment(\.scenePhase) private var scenePhase
 
@@ -54,8 +55,19 @@ public struct ContentView: View {
     @ViewBuilder
     private var content: some View {
         if isStimulusPreview, ProcessInfo.processInfo.arguments.contains("-recording") {
-            // The recording chrome over the stimulus, without a device.
-            StudySessionView(tracking: tracking) { _ in }
+            // The recording chrome over the stimulus, without a device. Finishing shows what
+            // was exported, so the whole recording path can be exercised by a UI test.
+            if let previewSummary {
+                Text(previewSummary)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(Instrument.paper)
+                    .padding(40)
+                    .accessibilityIdentifier("export_summary")
+            } else {
+                StudySessionView(tracking: tracking) { export in
+                    previewSummary = export.map(Self.summarise) ?? "no export"
+                }
+            }
         } else if isStimulusPreview {
             ShopView(
                 recorder: EventRecorder(),
@@ -348,6 +360,20 @@ public struct ContentView: View {
     }
 
     // MARK: Actions
+
+    /// Event counts by kind, read back from the file that was actually written.
+    private static func summarise(_ export: SessionExporter.Export) -> String {
+        guard
+            let data = try? Data(contentsOf: export.documentURL),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let events = object["events"] as? [[String: Any]]
+        else { return "unreadable export" }
+        var counts: [String: Int] = [:]
+        for event in events {
+            if let kind = event["event"] as? String { counts[kind, default: 0] += 1 }
+        }
+        return counts.keys.sorted().map { "\($0) \(counts[$0] ?? 0)" }.joined(separator: " · ")
+    }
 
     private func syncGeometry(_ size: CGSize) {
         viewport = size

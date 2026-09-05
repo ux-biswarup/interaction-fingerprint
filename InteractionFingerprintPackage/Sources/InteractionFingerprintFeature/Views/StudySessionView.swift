@@ -38,6 +38,8 @@ public struct StudySessionView: View {
                     }
 
                 TouchObserver { touch in
+                    // A drag is a scroll, already recorded from the scroll view's geometry.
+                    guard touch.travelPoints < ObservingRecogniser.tapTravelLimit else { return }
                     let area = registry.hitTest(
                         normalised: CGPoint(
                             x: touch.location.x / max(proxy.size.width, 1),
@@ -98,6 +100,7 @@ public struct StudySessionView: View {
             Button("Finish") { finish() }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Shop.action)
+                .accessibilityIdentifier("finish_recording")
                 .accessibilityHint("Stops recording and saves the session")
         }
         .padding(.horizontal, 13)

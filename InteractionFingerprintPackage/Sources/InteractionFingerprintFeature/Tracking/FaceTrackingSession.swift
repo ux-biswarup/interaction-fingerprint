@@ -257,9 +257,16 @@ public final class FaceTrackingSession {
         // time a threshold is crossed reads as instability even when the estimate is fine.
         guard shouldDraw(quality), let normalised else { return }
 
+        // The recorded value is unbounded, because an estimate that fell off the display is
+        // information. The drawn dot is held just inside the edge, because a dot that
+        // vanishes reads as tracking loss when it is nothing of the kind.
+        let visible = CGPoint(
+            x: min(max(Double(normalised.x), -0.03), 1.03),
+            y: min(max(Double(normalised.y), -0.03), 1.03)
+        )
         displayGaze = CGPoint(
-            x: horizontalFilter.filter(Double(normalised.x), timestamp: frame.timestamp),
-            y: verticalFilter.filter(Double(normalised.y), timestamp: frame.timestamp)
+            x: horizontalFilter.filter(Double(visible.x), timestamp: frame.timestamp),
+            y: verticalFilter.filter(Double(visible.y), timestamp: frame.timestamp)
         )
     }
 

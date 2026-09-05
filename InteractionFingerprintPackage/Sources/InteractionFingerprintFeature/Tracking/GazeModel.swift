@@ -85,11 +85,19 @@ public struct GazeBasis: Codable, Sendable, Equatable, Hashable {
     }
 
     /// The terms that make up the corrected gaze angle.
+    ///
+    /// `boundedU` and `boundedV` feed the quadratic terms and default to the raw inputs.
+    /// At prediction time the model passes versions clamped to the calibrated range, so
+    /// the linear part may extrapolate off the edge of the display while the curvature,
+    /// which is only known inside the grid, saturates. See `GazeModel.correct`.
     func angularTerms(
         u: Double, v: Double, yaw: Double, pitch: Double,
-        lookU: Double = 0, lookV: Double = 0
+        lookU: Double = 0, lookV: Double = 0,
+        boundedU: Double? = nil, boundedV: Double? = nil
     ) -> [Double] {
-        var terms: [Double] = order == 2 ? [1, u, v, u * u, v * v, u * v] : [1, u, v]
+        let qu = boundedU ?? u
+        let qv = boundedV ?? v
+        var terms: [Double] = order == 2 ? [1, u, v, qu * qu, qv * qv, qu * qv] : [1, u, v]
         if usesHeadPose {
             terms.append(yaw)
             terms.append(pitch)
@@ -200,6 +208,57 @@ public struct GazeCalibrationPoint: Sendable, Equatable {
     }
 }
 
+/// The span of every model input seen during calibration.
+///
+/// Recorded so that prediction can refuse to extrapolate. The first real recording made
+/// the need plain: a model that scored 69 points on held-out targets sent half of all
+/// samples off the screen in use, because the head-pose and quadratic terms were being
+/// evaluated far outside the range they had been fitted on. A coefficient learned over
+/// two degrees of head movement says nothing about ten.
+public struct GazeInputRange: Codable, Sendable, Equatable {
+    public let u: ClosedRange<Double>
+    public let v: ClosedRange<Double>
+    public let yaw: ClosedRange<Double>
+    public let pitch: ClosedRange<Double>
+    public let lookU: ClosedRange<Double>
+    public let lookV: ClosedRange<Double>
+
+    /// How far beyond the calibrated span an input may go before it is held, as a fraction
+    /// of that span. A little slack so the edge of the grid is not a hard wall.
+    public static let margin = 0.15
+
+    public init(
+        u: ClosedRange<Double>, v: ClosedRange<Double>,
+        yaw: ClosedRange<Double>, pitch: ClosedRange<Double>,
+        lookU: ClosedRange<Double>, lookV: ClosedRange<Double>
+    ) {
+        self.u = u
+        self.v = v
+        self.yaw = yaw
+        self.pitch = pitch
+        self.lookU = lookU
+        self.lookV = lookV
+    }
+
+    public init?(measurements: [GazeMeasurement]) {
+        guard !measurements.isEmpty else { return nil }
+        func span(_ values: [Double]) -> ClosedRange<Double> {
+            (values.min() ?? 0)...(values.max() ?? 0)
+        }
+        self.init(
+            u: span(measurements.map(\.u)), v: span(measurements.map(\.v)),
+            yaw: span(measurements.map(\.headYaw)), pitch: span(measurements.map(\.headPitch)),
+            lookU: span(measurements.map(\.lookU)), lookV: span(measurements.map(\.lookV))
+        )
+    }
+
+    /// Holds a value inside the calibrated span plus margin.
+    public static func bound(_ value: Double, to range: ClosedRange<Double>) -> Double {
+        let slack = (range.upperBound - range.lowerBound) * margin
+        return min(max(value, range.lowerBound - slack), range.upperBound + slack)
+    }
+}
+
 /// A fitted correction from measured gaze angles to a position on the display.
 ///
 /// The correction is applied to the *angles*, never to the landing position. A person's
@@ -223,6 +282,9 @@ public struct GazeModel: Codable, Sendable, Equatable {
     public let cameraOffsetY: Double
     /// Tikhonov strength chosen by cross-validation. Zero means no shrinkage was needed.
     public let ridge: Double
+    /// What the inputs spanned during calibration. Nil on models saved before this existed,
+    /// which then predict without bounds as they always did.
+    public let inputRange: GazeInputRange?
 
     /// **Accuracy.** Offset between a target and the *mean* estimate while the eyes were on
     /// it, in screen points, measured on targets held out of the fit.
@@ -259,11 +321,29 @@ public struct GazeModel: Codable, Sendable, Equatable {
     public let calibratedDistanceRange: ClosedRange<Double>
     public let createdAt: Date
 
+    /// The linear terms are free to extrapolate: an angular model is exactly the kind of
+    /// thing that should still be right a little beyond the grid. Everything else, the
+    /// curvature, the head-pose and the eye-shape terms, is held at the edge of what was
+    /// seen during calibration, because outside that range it is unknown, and an unknown
+    /// multiplied by a large coefficient is how a dot ends up three screens to the right.
     public func correct(
         u: Double, v: Double, yaw: Double = 0, pitch: Double = 0,
         lookU: Double = 0, lookV: Double = 0
     ) -> (u: Double, v: Double) {
-        let terms = basis.angularTerms(u: u, v: v, yaw: yaw, pitch: pitch, lookU: lookU, lookV: lookV)
+        let terms: [Double]
+        if let r = inputRange {
+            terms = basis.angularTerms(
+                u: u, v: v,
+                yaw: GazeInputRange.bound(yaw, to: r.yaw),
+                pitch: GazeInputRange.bound(pitch, to: r.pitch),
+                lookU: GazeInputRange.bound(lookU, to: r.lookU),
+                lookV: GazeInputRange.bound(lookV, to: r.lookV),
+                boundedU: GazeInputRange.bound(u, to: r.u),
+                boundedV: GazeInputRange.bound(v, to: r.v)
+            )
+        } else {
+            terms = basis.angularTerms(u: u, v: v, yaw: yaw, pitch: pitch, lookU: lookU, lookV: lookV)
+        }
         return (
             u: zip(terms, uCoefficients).reduce(0) { $0 + $1.0 * $1.1 },
             v: zip(terms, vCoefficients).reduce(0) { $0 + $1.0 * $1.1 }
@@ -353,8 +433,13 @@ public enum GazeModelFitter {
     /// Roughly six centimetres of movement at normal holding distances.
     static let minimumInverseDistanceSpread = 0.25
 
-    /// Minimum head rotation range, in radians, before pose terms are offered. About 1.7°.
-    static let minimumHeadPoseSpread = 0.03
+    /// Minimum head rotation range, in radians, before pose terms are offered. About 6°.
+    ///
+    /// Was 1.7°, and that was the cause of the first recording's wild dot: pose
+    /// coefficients fitted on two degrees of variation, then evaluated on the ten degrees a
+    /// head and a hand produce in use. Head pose changes relative to the camera whenever
+    /// the phone turns, so an unbounded pose term is also a phone-motion amplifier.
+    static let minimumHeadPoseSpread = 0.10
 
     /// Minimum range of the folded eye-direction blend shapes, on their 0...1 scale, before
     /// they are offered as inputs. Below this they were not captured or did not move.
@@ -394,6 +479,8 @@ public enum GazeModelFitter {
                 (looksV.max() ?? 0) - (looksV.min() ?? 0)
             )
 
+            let inputRange = GazeInputRange(measurements: usable.compactMap { $0.measurement(for: source) })
+
             for basis in GazeBasis.allCases {
                 // Solving for the camera position needs real distance variation, otherwise
                 // it is indistinguishable from a constant angular offset.
@@ -428,6 +515,7 @@ public enum GazeModelFitter {
                                 cameraOffsetX: solution.offsetX,
                                 cameraOffsetY: solution.offsetY,
                                 ridge: ridge,
+                                inputRange: inputRange,
                                 accuracyPoints: score.accuracy,
                                 accuracyDegrees: degrees(
                                     points: score.accuracy, distance: meanDistance, geometry: geometry
@@ -464,6 +552,7 @@ public enum GazeModelFitter {
             cameraOffsetX: winner.cameraOffsetX,
             cameraOffsetY: winner.cameraOffsetY,
             ridge: winner.ridge,
+            inputRange: winner.inputRange,
             accuracyPoints: winner.accuracyPoints,
             accuracyDegrees: winner.accuracyDegrees,
             worstTargetPoints: winner.worstTargetPoints,
@@ -648,6 +737,7 @@ public enum GazeModelFitter {
                 cameraOffsetX: solution.offsetX,
                 cameraOffsetY: solution.offsetY,
                 ridge: ridge,
+                inputRange: nil,
                 accuracyPoints: 0,
                 accuracyDegrees: 0,
                 worstTargetPoints: 0,

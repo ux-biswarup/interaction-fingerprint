@@ -774,6 +774,8 @@ func headPoseTermsNeedHeadMovement() throws {
     // Every synthetic frame has zero yaw and pitch, so those columns carry no information
     // and fitting them would be inventing signal.
     #expect(!model.basis.usesHeadPose)
+    // And the bar is real head movement, about six degrees, not the tremor of holding still.
+    #expect(GazeModelFitter.minimumHeadPoseSpread >= 0.1)
 }
 
 @Test("Eye-direction shape terms are refused when they were never captured")
@@ -814,6 +816,87 @@ func eyeLookTermsAreUsedWhenInformative() throws {
     #expect(model.basis.usesEyeLook)
     #expect(model.summary.contains("look"))
     #expect(model.accuracyPoints < 2)
+}
+
+@Test("Head-pose and curvature terms are held at the edge of the calibrated range, the linear terms are not")
+func predictionDoesNotExtrapolateNonlinearTerms() {
+    // The situation from the first recording: a large pose coefficient fitted on almost
+    // no head movement. Terms: [1, u, v, u², v², uv, yaw, pitch].
+    let basis = GazeBasis(order: 2, solvesCameraOffset: false, usesHeadPose: true)
+    let range = GazeInputRange(
+        u: -0.2...0.2, v: -0.3...0.1, yaw: -0.01...0.01, pitch: -0.01...0.01,
+        lookU: 0...0, lookV: 0...0
+    )
+    func model(_ inputRange: GazeInputRange?) -> GazeModel {
+        GazeModel(
+            source: .convergence, basis: basis,
+            uCoefficients: [0, 1, 0, 0, 0, 0, 4.0, 0],
+            vCoefficients: [0, 0, 1, 0, 230, 0, 0, 2.4],
+            cameraOffsetX: 0, cameraOffsetY: 0, ridge: 0, inputRange: inputRange,
+            accuracyPoints: 0, accuracyDegrees: 0, worstTargetPoints: 0, perSampleErrorPoints: 0,
+            inSampleAccuracyPoints: 0, precisionPoints: 0, sampleCount: 0, targetCount: 0,
+            meanCalibrationDistance: 0.37, calibratedDistanceRange: 0.3...0.4, createdAt: Date()
+        )
+    }
+    let bounded = model(range)
+    let unbounded = model(nil)
+
+    // Ten degrees of yaw, the phone turned in the hand. Unbounded, that is 0.7 in u, about
+    // 26 cm off the side of the screen. Bounded, it is held at the edge of the calibrated
+    // 0.01 rad plus 15% of the 0.02 span, which is 0.013.
+    let turned = bounded.correct(u: 0, v: 0, yaw: 0.17, pitch: 0)
+    let atEdge = bounded.correct(u: 0, v: 0, yaw: 0.013, pitch: 0)
+    #expect(abs(turned.u - atEdge.u) < 1e-9)
+    #expect(abs(unbounded.correct(u: 0, v: 0, yaw: 0.17, pitch: 0).u - 0.68) < 1e-9)
+
+    // The curvature saturates too: v well below the grid uses v² at the boundary.
+    let far = bounded.correct(u: 0, v: -0.9, yaw: 0, pitch: 0)
+    let boundaryV = -0.3 - 0.4 * GazeInputRange.margin
+    #expect(abs(far.v - (-0.9 + 230 * boundaryV * boundaryV)) < 1e-9)
+
+    // But the linear part still extrapolates, so gaze beyond the grid still moves the estimate.
+    #expect(bounded.correct(u: 0.5, v: 0, yaw: 0, pitch: 0).u > bounded.correct(u: 0.2, v: 0, yaw: 0, pitch: 0).u)
+}
+
+@Test("The fitter records what its inputs spanned")
+func fitterRecordsInputRange() throws {
+    let observer = SyntheticObserver()
+    let points = observer.calibration()
+    let model = try #require(GazeModelFitter.best(points: points, geometry: observer.geometry))
+    let range = try #require(model.inputRange)
+    let us = points.compactMap { $0.convergence?.u }
+    #expect(abs(range.u.lowerBound - (us.min() ?? 0)) < 1e-12)
+    #expect(abs(range.u.upperBound - (us.max() ?? 0)) < 1e-12)
+    #expect(range.yaw == 0...0)
+}
+
+@Test("A calibration saved before the input range existed still loads, unbounded")
+func modelDecodesWithoutInputRange() throws {
+    let observer = SyntheticObserver()
+    let model = try #require(GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry))
+    var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(model)) as? [String: Any])
+    object.removeValue(forKey: "inputRange")
+    let legacy = try JSONDecoder().decode(GazeModel.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(legacy.inputRange == nil)
+    #expect(legacy.uCoefficients == model.uCoefficients)
+}
+
+@Test("Every gaze row carries the physical measurement, so a session can be re-mapped offline")
+func gazeRowsCarryTheMeasurement() {
+    let sample = FaceSample(
+        timestamp: 1, isTracked: true, eyesOpen: true, quality: "good",
+        eyeX: 0.01, eyeY: -0.04, eyeZ: -0.37,
+        convergenceU: 0.12, convergenceV: -0.31, perEyeU: nil, perEyeV: -0.30,
+        gazeX: 0.5, gazeY: 0.5, isCalibrated: true, signals: [:],
+        head: HeadPose(x: 0, y: 0, z: -0.37, pitch: 0.05, yaw: -0.02, roll: 0.01)
+    )
+    let m = EventRecorder.measurementMetrics(sample)
+    #expect(m["eyeZ"] == -0.37)
+    #expect(m["convergenceU"] == 0.12)
+    #expect(m["perEyeV"] == -0.30)
+    #expect(m["perEyeU"] == nil)
+    #expect(m["headYawRad"] == -0.02)
+    #expect(m["headPitchRad"] == 0.05)
 }
 
 @Test("A calibration saved before the eye-direction terms existed still loads")
