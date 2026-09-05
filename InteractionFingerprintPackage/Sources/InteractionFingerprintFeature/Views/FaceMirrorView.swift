@@ -58,20 +58,32 @@ struct FaceMirrorView: UIViewRepresentable {
             guard let face = anchor as? ARFaceAnchor else { return }
             faceGeometry?.update(from: face.geometry)
 
-            // Each eye to the point ARKit says they converge on. Yellow, like the dot.
+            // Each eye's direction as a short ray. Yellow, like the dot. Drawn short on
+            // purpose: a line all the way to the convergence point ends next to the camera
+            // and projects to the edge of the picture, which reads as nothing at all.
+            //
+            // The eye's rotation within the head is shown at three times its size, because
+            // ARKit reports it at roughly a fifth of the true angle and at true scale the
+            // rays barely move. The head axis is drawn at true scale.
+            let rayLength: Float = 0.06
             let left = position(face.leftEyeTransform)
             let right = position(face.rightEyeTransform)
+            let between = (left + right) / 2
+            let headForward = SIMD3<Float>(0, 0, 1)
+            func eyeRay(_ transform: simd_float4x4, from origin: SIMD3<Float>) -> (SIMD3<Float>, SIMD3<Float>) {
+                var axis = simd_normalize(SIMD3(transform.columns.2.x, transform.columns.2.y, transform.columns.2.z))
+                if axis.z < 0 { axis = -axis }
+                let exaggerated = simd_normalize(headForward + 3 * (axis - headForward))
+                return (origin, origin + exaggerated * rayLength)
+            }
             eyeLines.geometry = Self.lines(
-                [(left, face.lookAtPoint), (right, face.lookAtPoint)],
+                [eyeRay(face.leftEyeTransform, from: left), eyeRay(face.rightEyeTransform, from: right)],
                 colour: UIColor(red: 1.0, green: 0.8, blue: 0.2, alpha: 1)
             )
 
-            // The head's own forward axis, from between the eyes. Cyan. When this and the
-            // yellow lines disagree, the difference is the eye-in-head term the model scales.
-            let between = (left + right) / 2
-            let ahead = between + SIMD3<Float>(0, 0, simd_length(face.lookAtPoint - between))
+            // The head's own forward axis, from between the eyes. Cyan.
             headLine.geometry = Self.lines(
-                [(between, ahead)],
+                [(between, between + headForward * rayLength)],
                 colour: UIColor(red: 0.3, green: 0.85, blue: 1.0, alpha: 1)
             )
         }

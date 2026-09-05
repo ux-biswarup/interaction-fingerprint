@@ -505,6 +505,53 @@ over it exactly as on the plain screen. The two components of the model are the 
 when the dot is wrong, the picture says whether the head line or the eye lines were wrong,
 which is the question that decides what to fix. Nothing on that screen is recorded.
 
+## 14. The fourth calibration: the axes are right and the sensor is the limit
+
+Recorded on the corrected build, 5 September 2026, late evening. Grid accuracy 117 points,
+2.75°. A session of 2,148 events with 10 taps followed.
+
+**The rotation is confirmed.** Measured horizontal gaze now correlates **+0.70** with the true
+horizontal angle and vertical **+0.96** with the true vertical, against −0.02 and +0.18 the
+day before. The cross-correlations are near zero. Eye position and gaze now share the
+screen's axes, as they should have from the start.
+
+**The eye signal is weak and inconsistent.** With the head direction removed, the eyes'
+rotation within the head as ARKit reports it:
+
+| | Horizontal, near pass | Horizontal, far pass | Vertical, near | Vertical, far |
+| --- | --- | --- | --- | --- |
+| Fraction of the true rotation reported, eye transforms | 0.23 | 0.19 | 0.20 | 0.24 |
+| Fraction reported, eye-direction blend shapes | 0.35 | 0.23 | 0.33 | 0.40 |
+| Correlation with the true angle, transforms | 0.66 | 0.55 | 0.75 | 0.91 |
+
+Across the three columns at the far distance the eye-in-head term spans a fifth of a degree
+while the eyes swept 5.4°. Within a target the frames scatter by 0.1°, so this is not
+noise; it is a signal reported at a fifth to a third of its size, with a gain that changes
+between viewing distances and between head postures.
+
+**No model on these inputs fixes it.** Fitting on the calibration and scoring on the
+session's taps:
+
+| Eye-in-head input to the head-plus-eye model | Grid CV | Gaze-before-tap | On the display |
+| --- | --- | --- | --- |
+| Eye transforms (shipped) | 117 pt | 413 pt | 25% |
+| Eye-direction blend shapes | 117 pt | 366 pt | 46% |
+| Blend shapes horizontal, transforms vertical | 117 pt | 361 pt | 48% |
+| Both together | 113 pt | 614 pt | 3% |
+| Transforms, quadratic | 120 pt | 523 pt | 5% |
+| Head only, no eye term at all | 225 pt | 569 pt | 4% |
+
+Free-viewing error on the best of these is about 6 cm. The head direction alone predicts
+gaze on the grid to 225 points, which says how much of what ARKit calls gaze is the head.
+
+**What this means.** The tracker is now geometrically correct and its remaining error is a
+property of the sensor's eye estimate under hand-held, free-moving conditions. The
+published 3.18° for ARKit gaze was measured with the phone still and the head still. Under
+those conditions our grid figures of 55 to 117 points are in the same range. Under the
+conditions the study actually needs, the eye component is too weak to carry gaze at the
+level of page regions. The options, with their costs, are set out in the closing summary of
+this document's companion discussion and in `07-ROADMAP.md`.
+
 ## 13. What this does not claim
 
 It does not claim the gyroscope makes gaze more accurate. It cannot; it never sees the eye.
