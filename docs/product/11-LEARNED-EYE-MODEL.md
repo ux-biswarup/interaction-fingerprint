@@ -119,11 +119,20 @@ the calibration to correct, which keeps everything else in this plan intact.
 ## 3. Milestones
 
 1. **Pupil landmark result.** Done, §2c above. 2b starts.
-2. **Data pipeline.** GazeCapture licence, download, derivation of eye-in-head labels,
-   eye-crop extraction matching what the phone will produce. Validate the label derivation
+2. **Data pipeline.** In progress, 6 September 2026. Written and tested against a synthetic
+   subject folder: the GazeCapture reader (`Analysis/eyemodel/gazecapture.py`), square padded
+   eye crops, and the direction-ratio label in the display frame. The dataset itself has to
+   be requested by a named researcher at http://gazecapture.csail.mit.edu/download.php under
+   its research-only licence, which also requires citing Krafka et al., CVPR 2016, in any
+   publication. **Waiting on that request.** Remaining once it arrives: the head-pose
+   estimate per frame, since the dataset has none, and validation of the label derivation
    on our own calibration frames, where the truth is known.
-3. **Model.** Train a small network; hold out participants, not frames. Report eye-in-head
-   error in degrees on held-out people before any personalisation.
+3. **Model.** Scaffolded: a two-branch convolutional network of about 350,000 parameters
+   (`eyemodel/model.py`), a dataset class producing crops and labels, and a training entry
+   point that holds out by the dataset's own person split and reports degrees
+   (`eyemodel/train.py`). It learns a synthetic pupil-position task to under 3° in a test.
+   This Mac has PyTorch with the Metal backend, enough for the first real runs. Held-out
+   error on real people is the number to report before any personalisation.
 4. **On-device.** Core ML conversion, crop extraction from ARKit frames, 60 Hz timing on the
    iPhone 15, a fourth gaze source in the fitter.
 5. **Judgement.** Recalibrate, record sessions, gaze-before-tap. Go or no-go against 2 cm.

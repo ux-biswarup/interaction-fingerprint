@@ -30,6 +30,19 @@ For every gaze source in the calibration file it prints:
   model is replayed on the session's raw rows. The tap figure is the one that matters; the
   grid has been wrong about free viewing every time it disagreed.
 
+## Phase 1b: the learned eye model
+
+`eyemodel/` holds the GazeCapture reader, eye-crop extraction, the network and the training
+entry point. It needs the dataset, requested under its research licence from
+http://gazecapture.csail.mit.edu/download.php, unpacked to a folder of numbered subjects:
+
+```bash
+python3 -m eyemodel.train --root /path/to/GazeCapture --limit 50 --epochs 3   # smoke run
+python3 -m eyemodel.train --root /path/to/GazeCapture --epochs 20
+```
+
+The dataset is never copied into this repository. See `docs/product/11-LEARNED-EYE-MODEL.md`.
+
 ## Layout
 
 ```text
@@ -39,7 +52,12 @@ Analysis/
 │   ├── load.py             # sessions, gaze rows, taps, calibration frames
 │   ├── geometry.py         # the display geometry the app uses
 │   └── gaze.py             # head-plus-eye model, fitting, CV, gaze-before-tap
-└── tests/                  # synthetic checks of the model arithmetic
+├── eyemodel/
+│   ├── gazecapture.py      # dataset reader, crops, direction labels
+│   ├── dataset.py          # torch Dataset of eye crops
+│   ├── model.py            # the two-branch network
+│   └── train.py            # training with person-level hold-out
+└── tests/                  # synthetic checks; no participant data
 ```
 
 Nothing under `Data/` is committed. Keep it that way.
