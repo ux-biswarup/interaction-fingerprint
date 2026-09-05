@@ -12,17 +12,12 @@ let package = Package(
             targets: ["InteractionFingerprintFeature"]
         ),
     ],
-    dependencies: [
-        // ARKit gaze + blend-shape recording, SQLite persistence, JSON export.
-        // Vendored and patched copy of kyle-fox/ios-eye-tracking; see Vendor/EyeTracking/README.md.
-        .package(path: "../Vendor/EyeTracking"),
-    ],
     targets: [
+        // No external dependencies yet. The storage milestone will add GRDB directly;
+        // Vendor/EyeTracking is kept as reference material, not as a build input.
+        // See Vendor/EyeTracking/README.md.
         .target(
-            name: "InteractionFingerprintFeature",
-            dependencies: [
-                .product(name: "EyeTracking", package: "EyeTracking"),
-            ]
+            name: "InteractionFingerprintFeature"
         ),
         .testTarget(
             name: "InteractionFingerprintFeatureTests",

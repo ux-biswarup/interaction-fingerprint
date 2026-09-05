@@ -132,6 +132,10 @@ Start with:
 - `browOuterUpLeft`
 - `browOuterUpRight`
 
+> Note: these are the Swift API names. ARKit's `rawValue` strings, which are what land in
+> the exported JSON and in pandas columns, use a different spelling: `eyeBlink_L`,
+> `eyeSquint_R`, `browOuterUp_L`, and so on. `browInnerUp` is the same in both.
+
 ### Face/head
 - face position
 - face rotation

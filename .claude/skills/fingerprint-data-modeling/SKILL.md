@@ -26,10 +26,10 @@ Aggregated features are computed later from the events and stored separately, ne
   "isTracked": true,
   "durationMs": null,
   "signals": {
-    "eyeBlinkLeft": 0.03, "eyeBlinkRight": 0.04,
-    "eyeSquintLeft": 0.21, "eyeSquintRight": 0.19,
-    "eyeWideLeft": 0.10, "eyeWideRight": 0.11,
-    "browInnerUp": 0.05, "browOuterUpLeft": 0.02, "browOuterUpRight": 0.02
+    "eyeBlink_L": 0.03, "eyeBlink_R": 0.04,
+    "eyeSquint_L": 0.21, "eyeSquint_R": 0.19,
+    "eyeWide_L": 0.10, "eyeWide_R": 0.11,
+    "browInnerUp": 0.05, "browOuterUp_L": 0.02, "browOuterUp_R": 0.02
   },
   "head": { "x": 0.01, "y": -0.02, "z": -0.35, "pitch": 0.05, "yaw": -0.02, "roll": 0.00 }
 }
@@ -37,8 +37,12 @@ Aggregated features are computed later from the events and stored separately, ne
 
 - `timestamp` is seconds on the device monotonic clock. The session record stores
   `startedAt` (wall clock, ISO 8601) and `startedAtUptime` so analysis can convert.
-- Optional fields are `null`, never omitted, so pandas gets a stable column set.
-- Blend-shape names are the exact `ARFaceAnchor.BlendShapeLocation` raw values.
+- Optional fields are `null`, never omitted, so pandas gets a stable column set. Swift's
+  synthesised `Codable` omits nil optionals, so `FaceSample` writes its encoder by hand.
+- Blend-shape names are the exact `ARFaceAnchor.BlendShapeLocation` raw values, which are
+  **not** the Swift case names. `.eyeBlinkLeft` has the raw value `eyeBlink_L`. The setup
+  guide lists the Swift names; exports and pandas columns use the raw values. This is
+  pinned by a test in `InteractionFingerprintFeatureTests`.
 - Add fields only with a `schemaVersion` bump and a note in `Research/schema-changelog.md`.
 
 ## Swift types

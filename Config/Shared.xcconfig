@@ -17,15 +17,19 @@ CURRENT_PROJECT_VERSION = 1
 // ==========================================
 IPHONEOS_DEPLOYMENT_TARGET = 18.0
 
-// (1 == iPhone, 2 == iPad)
-TARGETED_DEVICE_FAMILY = 1,2 
+// iPhone only (1 == iPhone, 2 == iPad). The study runs on a Face ID iPhone held at a
+// marked distance; iPad support would add layouts that areas of interest cannot reuse,
+// and iPad multitasking would forbid the portrait lock below.
+TARGETED_DEVICE_FAMILY = 1
 
 // ==========================================
 // Info PLIST
 // ==========================================
 GENERATE_INFOPLIST_FILE = YES
-INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait
-INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationLandscapeRight UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
+// Portrait only. Gaze is projected with a fixed orientation and areas of interest
+// are matched against a fixed layout; rotation mid-session would invalidate both.
+INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait
+INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait
 // Camera access is required for ARKit TrueDepth face/eye tracking.
 INFOPLIST_KEY_NSCameraUsageDescription = This camera access is used to study gaze and facial interaction signals for the Interaction Fingerprint research prototype.
 

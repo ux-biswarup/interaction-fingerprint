@@ -30,9 +30,6 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <TestPlans>
          <TestPlanReference
-            reference = "container:InteractionFingerprint.xctestplan">
-         </TestPlanReference>
-         <TestPlanReference
             reference = "container:InteractionFingerprint/InteractionFingerprint.xctestplan"
             default = "YES">
          </TestPlanReference>

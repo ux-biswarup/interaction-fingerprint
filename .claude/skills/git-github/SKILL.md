@@ -40,10 +40,14 @@ If something sensitive is committed: do not just delete it in a new commit. Rewr
 
 ## Branches and PRs
 
-- `main` is always buildable. Work on short-lived branches: `feat/gaze-projection`,
-  `analysis/dwell-baseline`.
-- Open a PR even when solo; the description is the lab notebook entry. Link the hypothesis.
-- Use `gh pr create` and `gh pr view` from the terminal.
+Commit and push straight to `main`. No feature branches, no pull requests. This is the
+user's stated preference for this repo, decided on 2026-09-05: it is a solo project, so a
+pull request is a review step with no reviewer.
+
+- `main` must always build. Run the tests before pushing, not after.
+- Put the lab notebook detail in the commit message body instead of a PR description.
+  State the hypothesis the commit serves, and what was verified.
+- Revisit this only if the user says they want a different approach.
 
 ## Xcode-specific hygiene
 

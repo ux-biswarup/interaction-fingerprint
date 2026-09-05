@@ -28,6 +28,9 @@ the Simulator. Devices: iPhone X and later with Face ID, and iPad Pro with Face 
 - `blendShapes`: dictionary of `ARFaceAnchor.BlendShapeLocation` to `NSNumber` in 0...1.
   V0 records only: `eyeBlinkLeft/Right`, `eyeSquintLeft/Right`, `eyeWideLeft/Right`,
   `browInnerUp`, `browOuterUpLeft/Right`. Do not record all 52 yet.
+  Those are Swift case names. The `rawValue` strings that reach the exported data are
+  different: `eyeBlink_L`, `eyeSquint_R`, `browOuterUp_L` and so on. Use
+  `TrackedBlendShapes.keys` rather than writing either spelling by hand.
 - `isTracked`: false when the face is lost. Record it. Gaps are data.
 
 Use `session(_:didUpdate anchors:)` for anchors and `session(_:didUpdate frame:)` for the frame
