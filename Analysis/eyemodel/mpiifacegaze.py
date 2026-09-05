@@ -35,8 +35,8 @@ import numpy as np
 class FaceFrame:
     subject: str
     path: Path
-    left_eye: tuple[float, float, float, float]   # image pixels, participant's left eye
-    right_eye: tuple[float, float, float, float]
+    left_eye: tuple[float, float, float, float]   # the eye on the left of the image, which
+    right_eye: tuple[float, float, float, float]  # is the participant's right; both in pixels
     head_ratios: tuple[float, float]              # head forward direction, u and v
     gaze_ratios: tuple[float, float]              # true gaze direction, u and v
     distance_mm: float
@@ -99,8 +99,9 @@ def parse_line(subject: str, root: Path, line: str) -> FaceFrame | None:
         head_ratios = ratios(head_forward(rvec))
     except ValueError:
         return None
-    # Landmark order: participant's left eye outer, inner; right eye inner, outer (the
-    # dataset lists the four eye corners left to right in the image), then mouth corners.
+    # The four eye corners are listed left to right in the image, then the mouth corners.
+    # The image-left eye is the participant's right eye; the network does not care which
+    # is which as long as the assignment is consistent, and the same holds on device.
     left_eye = eye_box(landmarks[0], landmarks[1])
     right_eye = eye_box(landmarks[3], landmarks[2])
     return FaceFrame(

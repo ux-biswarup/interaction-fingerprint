@@ -130,7 +130,11 @@ by fetching their pages and probing their download links, not from memory:
 | Hugging Face hub | Searched the hub API for "gaze" | | One unofficial Gaze360 mirror; the rest unrelated | Not used. Re-hosted copies of licensed datasets carry a licence risk this research should not take. |
 | Kaggle | Searched | | No smartphone gaze dataset with the labels needed | Not used. |
 
-MPIIFaceGaze was downloaded to a folder outside the repository the same day. Its reader
+MPIIFaceGaze was downloaded to a folder outside the repository the same day: 37,667 frames
+from 15 people, 1,500 to 2,900 each, at 38 to 68 cm from the camera. The derived labels
+behave physically: the eyes' rotation within the head correlates at −0.72 and −0.83 with the
+head's direction, which is a person turning their head while keeping their eyes on the
+screen, and it is the sign a flipped head axis could not produce. Its reader
 (`Analysis/eyemodel/mpiifacegaze.py`) derives the label from the face centre, the 3D target
 and the head rotation, and the training entry point holds out participants by name.
 
