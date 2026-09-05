@@ -17,7 +17,13 @@ let package = Package(
         // Vendor/EyeTracking is kept as reference material, not as a build input.
         // See Vendor/EyeTracking/README.md.
         .target(
-            name: "InteractionFingerprintFeature"
+            name: "InteractionFingerprintFeature",
+            resources: [
+                // The learned eye-in-head model, compiled. Trained on MPIIFaceGaze
+                // (CC BY-NC-SA 4.0, Zhang et al. CVPRW 2017): research use only.
+                // See docs/product/11-LEARNED-EYE-MODEL.md.
+                .copy("Resources/EyeInHead.mlmodelc"),
+            ]
         ),
         .testTarget(
             name: "InteractionFingerprintFeatureTests",

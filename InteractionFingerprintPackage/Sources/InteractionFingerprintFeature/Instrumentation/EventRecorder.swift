@@ -221,6 +221,8 @@ public final class EventRecorder {
         if let v = sample.perEyeV { m["perEyeV"] = v }
         if let v = sample.pupilU { m["pupilU"] = v }
         if let v = sample.pupilV { m["pupilV"] = v }
+        if let v = sample.learnedU { m["learnedU"] = v }
+        if let v = sample.learnedV { m["learnedV"] = v }
         if let head = sample.head {
             m["headYawRad"] = head.yaw
             m["headPitchRad"] = head.pitch

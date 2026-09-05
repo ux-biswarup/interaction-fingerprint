@@ -135,6 +135,10 @@ public struct FaceSample: Codable, Sendable, Equatable {
     public let pupilU: Double?
     public let pupilV: Double?
 
+    /// The learned model's eye-in-head estimate for this frame, ratios. Nil when it did not run.
+    public let learnedU: Double?
+    public let learnedV: Double?
+
     public init(
         timestamp: TimeInterval,
         isTracked: Bool,
@@ -149,7 +153,9 @@ public struct FaceSample: Codable, Sendable, Equatable {
         head: HeadPose?,
         device: DeviceAttitude? = nil,
         pupilU: Double? = nil,
-        pupilV: Double? = nil
+        pupilV: Double? = nil,
+        learnedU: Double? = nil,
+        learnedV: Double? = nil
     ) {
         self.timestamp = timestamp
         self.isTracked = isTracked
@@ -170,6 +176,8 @@ public struct FaceSample: Codable, Sendable, Equatable {
         self.device = device
         self.pupilU = pupilU
         self.pupilV = pupilV
+        self.learnedU = learnedU
+        self.learnedV = learnedV
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -177,7 +185,7 @@ public struct FaceSample: Codable, Sendable, Equatable {
         case eyeX, eyeY, eyeZ
         case convergenceU, convergenceV, perEyeU, perEyeV
         case gazeX, gazeY, isCalibrated
-        case signals, head, device, pupilU, pupilV
+        case signals, head, device, pupilU, pupilV, learnedU, learnedV
     }
 
     /// Written by hand because the synthesised encoder omits nil optionals entirely.
@@ -208,6 +216,8 @@ public struct FaceSample: Codable, Sendable, Equatable {
         else { try container.encodeNil(forKey: .device) }
         try encodeOrNull(pupilU, .pupilU, into: &container)
         try encodeOrNull(pupilV, .pupilV, into: &container)
+        try encodeOrNull(learnedU, .learnedU, into: &container)
+        try encodeOrNull(learnedV, .learnedV, into: &container)
     }
 
     private func encodeOrNull(

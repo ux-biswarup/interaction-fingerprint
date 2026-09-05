@@ -160,12 +160,13 @@ public final class FaceTrackingSession {
     /// Hands the frame's image to Vision unless a detection is already running. Landmarks
     /// take longer than a frame, so some frames are skipped; the result is stamped with the
     /// frame it came from and treated as stale after a tenth of a second.
-    private func schedulePupilDetection(_ frame: ARFrame) {
+    private func schedulePupilDetection(_ frame: ARFrame, head: HeadPose) {
         guard pupilTask == nil else { return }
         let box = PixelBufferBox(buffer: frame.capturedImage)
         let timestamp = frame.timestamp
+        let headRatios = (u: head.forwardU, v: head.forwardV)
         pupilTask = Task { [weak self] in
-            let result = await self?.pupils.detect(box, timestamp: timestamp)
+            let result = await self?.pupils.detect(box, timestamp: timestamp, head: headRatios)
             guard let self else { return }
             if let result { self.latestPupil = result }
             self.pupilTask = nil
@@ -177,8 +178,19 @@ public final class FaceTrackingSession {
     /// in what they say about the eye's rotation within the head.
     private func pupilMeasurement(reference: GazeMeasurement?, head: HeadPose, at timestamp: TimeInterval) -> GazeMeasurement? {
         guard let reference, let pupil = latestPupil, timestamp - pupil.timestamp < 0.1 else { return nil }
-        return GazeMeasurement(
-            u: head.forwardU + pupil.u, v: head.forwardV + pupil.v,
+        return eyeInHeadMeasurement(u: pupil.u, v: pupil.v, reference: reference, head: head)
+    }
+
+    /// The learned model's reading as a gaze measurement, the same way.
+    private func learnedMeasurement(reference: GazeMeasurement?, head: HeadPose, at timestamp: TimeInterval) -> GazeMeasurement? {
+        guard let reference, let pupil = latestPupil, timestamp - pupil.timestamp < 0.1,
+              let u = pupil.learnedU, let v = pupil.learnedV else { return nil }
+        return eyeInHeadMeasurement(u: u, v: v, reference: reference, head: head)
+    }
+
+    private func eyeInHeadMeasurement(u: Double, v: Double, reference: GazeMeasurement, head: HeadPose) -> GazeMeasurement {
+        GazeMeasurement(
+            u: head.forwardU + u, v: head.forwardV + v,
             eyeX: reference.eyeX, eyeY: reference.eyeY, distance: reference.distance,
             headYaw: head.yaw, headPitch: head.pitch,
             lookU: reference.lookU, lookV: reference.lookV,
@@ -210,7 +222,6 @@ public final class FaceTrackingSession {
         }
 
         trackedFrameCount += 1
-        schedulePupilDetection(frame)
 
         let signals = Self.signals(from: anchor)
         let eyesOpen = TrackedBlendShapes.eyesOpen(in: signals)
@@ -221,6 +232,7 @@ public final class FaceTrackingSession {
             simd_mul(simd_inverse(frame.camera.transform), anchor.transform)
         )
         let head = Self.headPose(from: faceInCamera)
+        schedulePupilDetection(frame, head: head)
 
         let convergence = GazeRay.convergenceEstimate(
             faceInCamera: faceInCamera,
@@ -249,6 +261,7 @@ public final class FaceTrackingSession {
         }
         let reference = convergenceMeasurement ?? perEyeMeasurement
         let pupilMeasurement = pupilMeasurement(reference: reference, head: head, at: frame.timestamp)
+        let learnedMeasurement = learnedMeasurement(reference: reference, head: head, at: frame.timestamp)
 
         // The motion verdict is made in millimetres on the screen, which needs the viewing
         // distance measured on this very frame.
@@ -273,13 +286,15 @@ public final class FaceTrackingSession {
             perEye: perEyeMeasurement,
             headYaw: head.yaw,
             headPitch: head.pitch,
-            pupil: pupilMeasurement
+            pupil: pupilMeasurement,
+            learned: learnedMeasurement
         )
 
         let normalised = mapToScreen(
             convergence: convergenceMeasurement,
             perEye: perEyeMeasurement,
-            pupil: pupilMeasurement
+            pupil: pupilMeasurement,
+            learned: learnedMeasurement
         )
 
         latest = FaceSample(
@@ -301,7 +316,9 @@ public final class FaceTrackingSession {
             head: head,
             device: motion.isAvailable ? deviceAttitude : nil,
             pupilU: pupilMeasurement.map(\.eyeInHeadU),
-            pupilV: pupilMeasurement.map(\.eyeInHeadV)
+            pupilV: pupilMeasurement.map(\.eyeInHeadV),
+            learnedU: learnedMeasurement.map(\.eyeInHeadU),
+            learnedV: learnedMeasurement.map(\.eyeInHeadV)
         )
 
         // What counts as data and what should be drawn are different questions.
@@ -355,7 +372,8 @@ public final class FaceTrackingSession {
     private func mapToScreen(
         convergence: GazeMeasurement?,
         perEye: GazeMeasurement?,
-        pupil: GazeMeasurement?
+        pupil: GazeMeasurement?,
+        learned: GazeMeasurement?
     ) -> CGPoint? {
         guard let geometry = screenGeometry else { return nil }
 
@@ -364,6 +382,7 @@ public final class FaceTrackingSession {
             case .convergence: convergence
             case .perEye: perEye
             case .pupil: pupil
+            case .learned: learned
             }
             guard let measurement else { return nil }
             return geometry.normalised(fromCameraMetres: model.screenPlaneHit(for: measurement))

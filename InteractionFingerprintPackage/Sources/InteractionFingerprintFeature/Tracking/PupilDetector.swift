@@ -1,5 +1,6 @@
 import ARKit
 import CoreGraphics
+import CoreImage
 import Foundation
 import Vision
 
@@ -22,12 +23,21 @@ public struct PupilOffsets: Sendable, Equatable {
     public let confidence: Double
     /// Time of the camera frame the landmarks were found in.
     public let timestamp: TimeInterval
+    /// The learned model's eye-in-head estimate from the same frame's eye crops, when the
+    /// model is bundled and ran. Ratios in the display frame; sign left to the calibration.
+    public let learnedU: Double?
+    public let learnedV: Double?
 
-    public init(u: Double, v: Double, confidence: Double, timestamp: TimeInterval) {
+    public init(
+        u: Double, v: Double, confidence: Double, timestamp: TimeInterval,
+        learnedU: Double? = nil, learnedV: Double? = nil
+    ) {
         self.u = u
         self.v = v
         self.confidence = confidence
         self.timestamp = timestamp
+        self.learnedU = learnedU
+        self.learnedV = learnedV
     }
 }
 
@@ -85,6 +95,8 @@ actor PupilDetector {
     private let request: VNDetectFaceLandmarksRequest
     private var orientation: CGImagePropertyOrientation?
     private var failuresSinceLock = 0
+    private let cropper = EyeCropper()
+    private let learned = LearnedEyeModel()
 
     init() {
         let request = VNDetectFaceLandmarksRequest()
@@ -92,13 +104,17 @@ actor PupilDetector {
         self.request = request
     }
 
-    func detect(_ box: PixelBufferBox, timestamp: TimeInterval) -> PupilOffsets? {
+    var hasLearnedModel: Bool { learned != nil }
+
+    /// - Parameter head: the head's forward direction ratios for this frame, which the
+    ///   learned model takes as an input alongside the eye crops.
+    func detect(_ box: PixelBufferBox, timestamp: TimeInterval, head: (u: Double, v: Double)) -> PupilOffsets? {
         let orientations = orientation.map { [$0] } ?? Self.candidates
         for candidate in orientations {
             guard let face = detectFace(in: box.buffer, orientation: candidate) else { continue }
             if orientation == nil { orientation = candidate }
             failuresSinceLock = 0
-            return offsets(from: face, buffer: box.buffer, orientation: candidate, timestamp: timestamp)
+            return offsets(from: face, buffer: box.buffer, orientation: candidate, timestamp: timestamp, head: head)
         }
         // The locked orientation may be wrong if the first face was a fluke; after a run of
         // misses, start searching again.
@@ -117,7 +133,8 @@ actor PupilDetector {
         from face: VNFaceObservation,
         buffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation,
-        timestamp: TimeInterval
+        timestamp: TimeInterval,
+        head: (u: Double, v: Double)
     ) -> PupilOffsets? {
         guard let landmarks = face.landmarks,
               let leftPupil = landmarks.leftPupil, let rightPupil = landmarks.rightPupil,
@@ -140,6 +157,28 @@ actor PupilDetector {
         let paired = PupilGeometry.displayPaired(
             x: (left.x + right.x) / 2, y: (left.y + right.y) / 2, quarterTurned: quarterTurned
         )
-        return PupilOffsets(u: paired.u, v: paired.v, confidence: Double(landmarks.confidence), timestamp: timestamp)
+
+        // The learned model sees the same upright image the landmarks were found in. Vision
+        // and Core Image agree on a bottom-left origin, so the contour bounds crop directly.
+        var learnedU: Double?
+        var learnedV: Double?
+        if let learned,
+           let leftBox = EyeCropGeometry.bounds(of: leftEye.pointsInImage(imageSize: size)),
+           let rightBox = EyeCropGeometry.bounds(of: rightEye.pointsInImage(imageSize: size)) {
+            let image = CIImage(cvPixelBuffer: buffer).oriented(orientation)
+            // Vision's "left" is the participant's left, on the right of the image. The model
+            // names its inputs by image side, so the two are swapped here.
+            if let imageLeft = cropper.crop(image, eye: rightBox),
+               let imageRight = cropper.crop(image, eye: leftBox),
+               let estimate = learned.predict(leftEye: imageLeft, rightEye: imageRight, headU: head.u, headV: head.v) {
+                learnedU = estimate.u
+                learnedV = estimate.v
+            }
+        }
+
+        return PupilOffsets(
+            u: paired.u, v: paired.v, confidence: Double(landmarks.confidence), timestamp: timestamp,
+            learnedU: learnedU, learnedV: learnedV
+        )
     }
 }

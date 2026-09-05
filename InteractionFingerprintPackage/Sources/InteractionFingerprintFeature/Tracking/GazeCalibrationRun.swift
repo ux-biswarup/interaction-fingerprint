@@ -126,6 +126,8 @@ public final class GazeCalibrationRun {
         public let perEye: GazeMeasurement?
         /// Pupil-landmark gaze, when Vision found the face on this frame.
         public let pupil: GazeMeasurement?
+        /// Learned-model gaze, when the model ran on this frame.
+        public let learned: GazeMeasurement?
         public let headYaw: Double
         public let headPitch: Double
 
@@ -134,11 +136,13 @@ public final class GazeCalibrationRun {
             perEye: GazeMeasurement?,
             headYaw: Double,
             headPitch: Double,
-            pupil: GazeMeasurement? = nil
+            pupil: GazeMeasurement? = nil,
+            learned: GazeMeasurement? = nil
         ) {
             self.convergence = convergence
             self.perEye = perEye
             self.pupil = pupil
+            self.learned = learned
             self.headYaw = headYaw
             self.headPitch = headPitch
         }
@@ -332,8 +336,9 @@ public final class GazeCalibrationRun {
                     perEye: p,
                     headYaw: sample.headYaw,
                     headPitch: sample.headPitch,
-                    // The pupil reading rides on the frames the ARKit fixation gate kept.
-                    pupil: sample.pupil
+                    // The pupil and learned readings ride on the frames the ARKit fixation gate kept.
+                    pupil: sample.pupil,
+                    learned: sample.learned
                 )
             )
         }

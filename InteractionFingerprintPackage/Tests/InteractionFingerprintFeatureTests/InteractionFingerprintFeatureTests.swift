@@ -1,6 +1,8 @@
 import CoreGraphics
 import Foundation
 import Testing
+import CoreImage
+import CoreVideo
 import simd
 @testable import InteractionFingerprintFeature
 
@@ -885,6 +887,47 @@ func pupilSourceFollowsTheFixationGate() throws {
     // Without pupil readings the source contributes nothing and the fit proceeds on the rest.
     let model = try #require(GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry))
     #expect(model.source != .pupil)
+}
+
+@Test("Eye crops use the training geometry: a square around the box widened by a quarter on each side")
+func eyeCropGeometryMatchesTraining() {
+    // The same box the Python test uses: 70 wide, 40 tall at (160, 290).
+    let square = EyeCropGeometry.squareCrop(around: CGRect(x: 160, y: 290, width: 70, height: 40))
+    #expect(abs(square.width - 105) < 1e-9 && abs(square.height - 105) < 1e-9)
+    #expect(abs(square.midX - 195) < 1e-9 && abs(square.midY - 310) < 1e-9)
+    let bounds = EyeCropGeometry.bounds(of: [CGPoint(x: 3, y: 9), CGPoint(x: 10, y: 4), CGPoint(x: 7, y: 12)])
+    #expect(bounds == CGRect(x: 3, y: 4, width: 7, height: 8))
+    #expect(EyeCropGeometry.bounds(of: [CGPoint(x: 1, y: 1), CGPoint(x: 1, y: 5)]) == nil)
+}
+
+@Test("The cropper renders a 64 pixel greyscale buffer and keeps the eye in the middle")
+func eyeCropperRendersGreyscale() throws {
+    // A dark image with a bright rectangle where the eye box is.
+    let dark = CIImage(color: CIColor(red: 0.05, green: 0.05, blue: 0.05)).cropped(to: CGRect(x: 0, y: 0, width: 800, height: 600))
+    let bright = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: CGRect(x: 160, y: 290, width: 70, height: 40))
+    let image = bright.composited(over: dark)
+    let buffer = try #require(EyeCropper().crop(image, eye: CGRect(x: 160, y: 290, width: 70, height: 40)))
+    #expect(CVPixelBufferGetWidth(buffer) == 64 && CVPixelBufferGetHeight(buffer) == 64)
+    #expect(CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_OneComponent8)
+    CVPixelBufferLockBaseAddress(buffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+    let base = try #require(CVPixelBufferGetBaseAddress(buffer))
+    let stride = CVPixelBufferGetBytesPerRow(buffer)
+    func pixel(_ x: Int, _ y: Int) -> UInt8 { base.load(fromByteOffset: y * stride + x, as: UInt8.self) }
+    #expect(pixel(32, 32) > 200)
+    #expect(pixel(2, 2) < 60)
+}
+
+@Test("The bundled learned model loads and produces a finite estimate")
+func learnedModelLoadsFromTheBundle() throws {
+    let model = try #require(LearnedEyeModel())
+    let dark = CIImage(color: CIColor(red: 0.3, green: 0.3, blue: 0.3)).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 200))
+    let cropper = EyeCropper()
+    let left = try #require(cropper.crop(dark, eye: CGRect(x: 40, y: 80, width: 50, height: 30)))
+    let right = try #require(cropper.crop(dark, eye: CGRect(x: 110, y: 80, width: 50, height: 30)))
+    let estimate = try #require(model.predict(leftEye: left, rightEye: right, headU: 0.02, headV: -0.1))
+    #expect(estimate.u.isFinite && estimate.v.isFinite)
+    #expect(abs(estimate.u) < 2 && abs(estimate.v) < 2)
 }
 
 @Test("Camera axes are rotated into the display frame: display X is camera y, display Y is minus camera x")

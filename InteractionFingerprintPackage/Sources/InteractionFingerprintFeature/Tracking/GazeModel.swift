@@ -8,22 +8,27 @@ public enum GazeSource: String, Codable, Sendable, CaseIterable {
     /// Each eye's own orientation, averaged.
     case perEye
     /// The pupil's position inside the eye opening, from Vision's landmarks, added to the
-    /// head direction. An experiment; see `PupilDetector`.
+    /// head direction. See `PupilDetector`.
     case pupil
+    /// The learned eye-in-head model's estimate, added to the head direction. See
+    /// `LearnedEyeModel` and `docs/product/11-LEARNED-EYE-MODEL.md`.
+    case learned
 
     public var label: String {
         switch self {
         case .convergence: "convergence"
         case .perEye: "per-eye"
         case .pupil: "pupil"
+        case .learned: "learned"
         }
     }
 
     /// Whether the fit must show a positive gain along each axis. An eye that turns right
     /// must map right. The pupil source's sign convention was established from the first
-    /// calibration that used it, 6 September 2026: gains of +2.5 horizontal and +16
-    /// vertical, so it is held to the same rule as the ARKit sources.
-    var requiresPositiveGain: Bool { true }
+    /// calibration that used it, 6 September 2026. The learned model's depends on whether
+    /// the front camera image is mirrored relative to its training images, which the first
+    /// calibration will establish; until then its sign is left to the fit.
+    var requiresPositiveGain: Bool { self != .learned }
 }
 
 /// Shape of the correction.
@@ -251,6 +256,7 @@ public struct GazeCalibrationPoint: Codable, Sendable, Equatable {
     public let convergence: GazeMeasurement?
     public let perEye: GazeMeasurement?
     public let pupil: GazeMeasurement?
+    public let learned: GazeMeasurement?
     public let headYaw: Double
     public let headPitch: Double
 
@@ -261,18 +267,20 @@ public struct GazeCalibrationPoint: Codable, Sendable, Equatable {
         perEye: GazeMeasurement?,
         headYaw: Double,
         headPitch: Double,
-        pupil: GazeMeasurement? = nil
+        pupil: GazeMeasurement? = nil,
+        learned: GazeMeasurement? = nil
     ) {
         self.target = target
         self.targetIndex = targetIndex
         self.convergence = convergence
         self.perEye = perEye
         self.pupil = pupil
+        self.learned = learned
         self.headYaw = headYaw
         self.headPitch = headPitch
     }
 
-    private enum CodingKeys: String, CodingKey { case target, targetIndex, convergence, perEye, pupil, headYaw, headPitch }
+    private enum CodingKeys: String, CodingKey { case target, targetIndex, convergence, perEye, pupil, learned, headYaw, headPitch }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -281,6 +289,7 @@ public struct GazeCalibrationPoint: Codable, Sendable, Equatable {
         convergence = try c.decodeIfPresent(GazeMeasurement.self, forKey: .convergence)
         perEye = try c.decodeIfPresent(GazeMeasurement.self, forKey: .perEye)
         pupil = try c.decodeIfPresent(GazeMeasurement.self, forKey: .pupil)
+        learned = try c.decodeIfPresent(GazeMeasurement.self, forKey: .learned)
         headYaw = try c.decode(Double.self, forKey: .headYaw)
         headPitch = try c.decode(Double.self, forKey: .headPitch)
     }
@@ -290,6 +299,7 @@ public struct GazeCalibrationPoint: Codable, Sendable, Equatable {
         case .convergence: convergence
         case .perEye: perEye
         case .pupil: pupil
+        case .learned: learned
         }
     }
 }

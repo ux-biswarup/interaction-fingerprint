@@ -172,8 +172,23 @@ and the head rotation, and the training entry point holds out participants by na
    held out follows. The known next improvement, if it is needed, is head-pose normalisation
    of the crops, the standard step in the MPIIGaze line of work, which cancels head roll and
    distance before the network sees the eye.
-4. **On-device.** Core ML conversion, crop extraction from ARKit frames, 60 Hz timing on the
-   iPhone 15, a fourth gaze source in the fitter.
+4. **On-device.** Done in first form, 6 September 2026. The checkpoint is converted with
+   `eyemodel/export_coreml.py`, which refuses to save unless Core ML and PyTorch agree on the
+   same inputs to 1e-3, compiled with `coremlcompiler`, and bundled in the package as a 424 KB
+   resource. On the phone, `EyeCropper` cuts the two eyes out of the upright camera image
+   with exactly the training geometry, using the eye contours the pupil detector already
+   has, and `LearnedEyeModel` runs the network beside the landmarks on the same frame. Its
+   estimate is recorded on every gaze row (`learnedU`, `learnedV`), carried in the
+   calibration frames, and offered to the fitter as `GazeSource.learned`, sign left to the
+   fit until the first calibration establishes whether the front camera image is mirrored
+   relative to the training images. The bundled weights are from the three-epoch run; they
+   are replaced by the best checkpoint of the 20-epoch run when it finishes. Timing on the
+   iPhone 15 is measured by the next session's sample rate.
+
+   **Licence note.** The bundled weights were trained on MPIIFaceGaze, which is CC BY-NC-SA
+   4.0. This repository is a research prototype; anything derived from it commercially would
+   need a model trained on differently licensed data, and any publication cites Zhang,
+   Sugano, Fritz and Bulling, CVPRW 2017.
 5. **Judgement.** Recalibrate, record sessions, gaze-before-tap. Go or no-go against 2 cm.
 
 ## 4. What would stop it
