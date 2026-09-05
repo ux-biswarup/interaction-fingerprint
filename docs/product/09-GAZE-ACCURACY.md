@@ -143,6 +143,15 @@ and generative interfaces.
 
 ## 5a. Measured on device, 5 September 2026
 
+> **Read with `10-MOTION-FUSION.md` sections 11 and 12.** The figures in this section are
+> held-out error on the calibration grid. Later the same day the exported calibration
+> frames showed that ARKit's camera axes were rotated relative to what the geometry
+> assumed, that the eye-in-head rotation arrives at about a fifth of its true size, and
+> that grid accuracy does not predict free viewing: measured against 43 taps as ground
+> truth, the best model structure sits at about 225 points, and the sensor's free-viewing
+> floor for this participant is currently 2° to 3°. The grid numbers below stand as what
+> they are; they are not the accuracy of the study data.
+
 iPhone 15, iOS 26.5.2, held in the hand, accuracy measured as the offset of each target's
 mean gaze on targets held out of the fit.
 

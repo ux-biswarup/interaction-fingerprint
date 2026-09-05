@@ -34,7 +34,13 @@ in the trusted envelope. It exposed two defects, both now fixed and covered by t
 calibration extrapolated its head-pose and quadratic terms and sent half of the gaze off
 the screen, and taps were not recorded at all. See `10-MOTION-FUSION.md` section 9.
 Second recording, same day: 20 taps all attributed, 72% of gaze on the display, dwells up
-to 1.5 s. **Gate passed.**
+to 1.5 s. **Gate passed** for the instrumentation. A third recording then exposed a fault in
+the calibration's prediction rule, and the exported calibration frames exposed two deeper
+ones: ARKit's camera axes were rotated relative to the geometry, and the eye signal arrives
+at a fifth of its true size on top of a full-strength head direction. The model is now
+head plus corrected eye-in-head on corrected axes, and gaze-before-tap error in free viewing
+is the figure that judges it; see `10-MOTION-FUSION.md` sections 9, 11 and 12. **Sensing
+accuracy in free viewing is currently 2° to 3° and is the open problem of Phase 1.**
 
 ## Phase 3 — Fingerprint
 Normalize events, derive features, summarize sessions, visualize fingerprints.

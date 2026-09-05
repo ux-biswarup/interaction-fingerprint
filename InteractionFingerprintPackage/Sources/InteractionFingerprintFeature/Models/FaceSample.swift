@@ -12,14 +12,37 @@ public struct HeadPose: Codable, Sendable, Equatable {
     public let pitch: Double
     public let yaw: Double
     public let roll: Double
+    /// The head's forward direction as ratios dx/dz and dy/dz in the display frame, the
+    /// same units as the gaze angles. The fixed-gain term of the gaze model.
+    public let forwardU: Double
+    public let forwardV: Double
 
-    public init(x: Double, y: Double, z: Double, pitch: Double, yaw: Double, roll: Double) {
+    public init(
+        x: Double, y: Double, z: Double, pitch: Double, yaw: Double, roll: Double,
+        forwardU: Double = 0, forwardV: Double = 0
+    ) {
         self.x = x
         self.y = y
         self.z = z
         self.pitch = pitch
         self.yaw = yaw
         self.roll = roll
+        self.forwardU = forwardU
+        self.forwardV = forwardV
+    }
+
+    private enum CodingKeys: String, CodingKey { case x, y, z, pitch, yaw, roll, forwardU, forwardV }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        x = try c.decode(Double.self, forKey: .x)
+        y = try c.decode(Double.self, forKey: .y)
+        z = try c.decode(Double.self, forKey: .z)
+        pitch = try c.decode(Double.self, forKey: .pitch)
+        yaw = try c.decode(Double.self, forKey: .yaw)
+        roll = try c.decode(Double.self, forKey: .roll)
+        forwardU = try c.decodeIfPresent(Double.self, forKey: .forwardU) ?? 0
+        forwardV = try c.decodeIfPresent(Double.self, forKey: .forwardV) ?? 0
     }
 
     /// Combined off-axis head rotation in radians, used for the quality envelope.

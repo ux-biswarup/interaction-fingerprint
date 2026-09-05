@@ -223,6 +223,8 @@ public final class EventRecorder {
             m["headYawRad"] = head.yaw
             m["headPitchRad"] = head.pitch
             m["headRollRad"] = head.roll
+            m["headForwardU"] = head.forwardU
+            m["headForwardV"] = head.forwardV
         }
         return m
     }

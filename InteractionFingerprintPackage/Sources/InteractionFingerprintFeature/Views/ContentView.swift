@@ -15,6 +15,8 @@ public struct ContentView: View {
     @State private var cameraStatus = CameraAuthorization.statusDescription
     @State private var viewport: CGSize = .zero
     @State private var previewSummary: String?
+    /// Show the camera's view of the face instead of the plain screen. Debug only.
+    @State private var showsCamera = false
     @Environment(\.displayScale) private var displayScale
     @Environment(\.scenePhase) private var scenePhase
 
@@ -128,6 +130,14 @@ public struct ContentView: View {
         ZStack {
             Instrument.ink.ignoresSafeArea()
 
+            if showsCamera, tracking.state == .running {
+                // How the system sees the participant: mesh, head axis, eye lines. The dot
+                // is drawn over it exactly as on the plain screen, so the two can be compared.
+                FaceMirrorView(session: tracking.arSession)
+                    .ignoresSafeArea()
+                    .opacity(0.85)
+            }
+
             if tracking.state == .running, let gaze = tracking.displayGaze {
                 // A moving phone is a fact about the data, not a reason to change the dot.
                 GazeDot(
@@ -180,6 +190,15 @@ public struct ContentView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(tracking.quality.isConfident ? Instrument.paper : Instrument.warn)
                 }
+
+                Picker("View", selection: $showsCamera) {
+                    Text("Screen").tag(false)
+                    Text("Camera").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+                .padding(.top, 4)
+                .accessibilityLabel("Tracking view")
             }
         }
         .frame(maxWidth: .infinity)

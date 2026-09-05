@@ -18,26 +18,33 @@ public enum GazeSource: String, Codable, Sendable, CaseIterable {
 
 /// Shape of the correction.
 ///
-/// Three independent choices, all decided by cross-validation rather than by assumption:
+/// The model is physical before it is statistical. ARKit reports the direction of the
+/// **head** at full strength and the rotation of the **eyes within the head** at roughly a
+/// fifth of its true size, which was established from exported calibration frames and
+/// confirmed against taps in free viewing (`docs/product/10-MOTION-FUSION.md` §11). So the
+/// corrected gaze is
+///
+///     gaze = head direction + f(measured gaze − head direction)
+///
+/// where `f` is the fitted correction of the eye-in-head angle, and the head passes through
+/// with a gain of exactly one because that is what a direction does. Only `f` has free
+/// parameters. Two of its shapes are decided by cross-validation:
 ///
 /// - `order` 1 or 2. A quadratic can follow the mild curvature that appears towards the
 ///   edges of the display, at the cost of twice the parameters.
 /// - `solvesCameraOffset`. Also solves where the camera really sits relative to the
 ///   display. That is a fixed distance while the eye's own error is a fixed angle, and the
 ///   two only separate when the data spans more than one viewing distance.
-/// - `usesHeadPose`. Adds head yaw and pitch as terms. ARKit's eye estimate degrades as the
-///   head turns away from the camera, and if that degradation is systematic it can be
-///   corrected. Only offered when the head pose actually varied during calibration.
-/// - `usesEyeLook`. Adds ARKit's eye-direction blend shapes, folded into a horizontal and a
-///   vertical term, as a second readout of gaze from the same model. Offered only when they
-///   varied during calibration, and kept only if they lower held-out error.
+/// - `usesHeadPose` is always true and names the head-plus-eye structure above. It is kept
+///   as a field so stored models decode. `usesEyeLook` is always false: the eye-direction
+///   blend shapes are a second readout of the same eye rotation and were collinear with it.
 public struct GazeBasis: Codable, Sendable, Equatable, Hashable {
     public let order: Int
     public let solvesCameraOffset: Bool
     public let usesHeadPose: Bool
     public let usesEyeLook: Bool
 
-    public init(order: Int, solvesCameraOffset: Bool, usesHeadPose: Bool, usesEyeLook: Bool = false) {
+    public init(order: Int, solvesCameraOffset: Bool, usesHeadPose: Bool = true, usesEyeLook: Bool = false) {
         self.order = order
         self.solvesCameraOffset = solvesCameraOffset
         self.usesHeadPose = usesHeadPose
@@ -58,18 +65,16 @@ public struct GazeBasis: Codable, Sendable, Equatable, Hashable {
         usesEyeLook = try c.decodeIfPresent(Bool.self, forKey: .usesEyeLook) ?? false
     }
 
+    /// The shapes the fitter may choose between. The head is not optional and the
+    /// eye-direction shapes are not offered; see the type documentation.
     public static let allCases: [GazeBasis] = [1, 2].flatMap { order in
-        [false, true].flatMap { offset in
-            [false, true].flatMap { pose in
-                [false, true].map { look in
-                    GazeBasis(order: order, solvesCameraOffset: offset, usesHeadPose: pose, usesEyeLook: look)
-                }
-            }
+        [false, true].map { offset in
+            GazeBasis(order: order, solvesCameraOffset: offset, usesHeadPose: true, usesEyeLook: false)
         }
     }
 
     var angularTermCount: Int {
-        (order == 2 ? 6 : 3) + (usesHeadPose ? 2 : 0) + (usesEyeLook ? 2 : 0)
+        order == 2 ? 6 : 3
     }
 
     public var parameterCount: Int {
@@ -77,46 +82,81 @@ public struct GazeBasis: Codable, Sendable, Equatable, Hashable {
     }
 
     public var label: String {
-        var parts = [order == 2 ? "quadratic" : "linear"]
+        var parts = ["head", order == 2 ? "quadratic" : "linear"]
         if solvesCameraOffset { parts.append("camera") }
-        if usesHeadPose { parts.append("pose") }
-        if usesEyeLook { parts.append("look") }
         return parts.joined(separator: "+")
     }
 
-    /// The terms that make up the corrected gaze angle.
+    /// The terms that make up the corrected gaze angle, from **standardised** inputs.
     ///
-    /// `boundedU` and `boundedV` feed the quadratic terms and default to the raw inputs.
-    /// At prediction time the model passes versions clamped to the calibrated range, so
-    /// the linear part may extrapolate off the edge of the display while the curvature,
-    /// which is only known inside the grid, saturates. See `GazeModel.correct`.
-    func angularTerms(
-        u: Double, v: Double, yaw: Double, pitch: Double,
-        lookU: Double = 0, lookV: Double = 0,
-        boundedU: Double? = nil, boundedV: Double? = nil
-    ) -> [Double] {
-        let qu = boundedU ?? u
-        let qv = boundedV ?? v
-        var terms: [Double] = order == 2 ? [1, u, v, qu * qu, qv * qv, qu * qv] : [1, u, v]
-        if usesHeadPose {
-            terms.append(yaw)
-            terms.append(pitch)
+    /// `z` is `[u, v, yaw, pitch, lookU, lookV]` after `GazeInputScaling` has centred and
+    /// scaled each one to roughly unit spread. Fitting on raw inputs was the root of an
+    /// ill-conditioned model: the vertical gaze ratio spans about 0.05 across the whole
+    /// display, so its square is all but collinear with it, the two took coefficients in
+    /// the hundreds that cancelled inside the grid, and the shrinkage penalty could not see
+    /// any of it because it was measured in the wrong units.
+    func angularTerms(_ z: [Double]) -> [Double] {
+        let u = z[0], v = z[1]
+        return order == 2 ? [1, u, v, u * u, v * v, u * v] : [1, u, v]
+    }
+
+    /// Derivative of every term with respect to standardised `u` (axis 0) or `v` (axis 1).
+    /// Used to continue the correction linearly beyond the calibrated range.
+    func angularTermGradient(_ z: [Double], axis: Int) -> [Double] {
+        let u = z[0], v = z[1]
+        if axis == 0 {
+            return order == 2 ? [0, 1, 0, 2 * u, 0, v] : [0, 1, 0]
         }
-        if usesEyeLook {
-            terms.append(lookU)
-            terms.append(lookV)
-        }
-        return terms
+        return order == 2 ? [0, 0, 1, 0, 2 * v, u] : [0, 0, 1]
     }
 
     /// One row of the fitting matrix. The camera position enters as a term in one over the
-    /// distance, which keeps it linear in the unknowns.
-    func designRow(for m: GazeMeasurement) -> [Double] {
-        var row = angularTerms(
-            u: m.u, v: m.v, yaw: m.headYaw, pitch: m.headPitch, lookU: m.lookU, lookV: m.lookV
-        )
+    /// distance, in raw units because its coefficient is a distance that is read back out.
+    func designRow(for m: GazeMeasurement, scaling: GazeInputScaling) -> [Double] {
+        var row = angularTerms(scaling.standardise(m.inputs))
         if solvesCameraOffset { row.append(-1 / m.distance) }
         return row
+    }
+}
+
+/// Centre and scale for each model input, learned from the calibration frames.
+///
+/// The inputs are `GazeMeasurement.inputs`: the eye-in-head angle first, which is what the
+/// correction is fitted on, then the remaining measured quantities for the record.
+///
+/// Every input is mapped to `(x - centre) / scale` before any term is formed, so that the
+/// columns of the fit have comparable size, the shrinkage penalty means the same thing for
+/// each of them, and a coefficient's magnitude says something about its importance.
+public struct GazeInputScaling: Codable, Sendable, Equatable {
+    /// Same order as `GazeMeasurement.inputs`.
+    public let centre: [Double]
+    public let scale: [Double]
+
+    public static let identity = GazeInputScaling(centre: [0, 0, 0, 0, 0, 0], scale: [1, 1, 1, 1, 1, 1])
+
+    public init(centre: [Double], scale: [Double]) {
+        self.centre = centre
+        self.scale = scale
+    }
+
+    /// Mean and standard deviation of each input. An input that never varied gets a scale
+    /// of one, so it passes through unchanged rather than dividing by zero.
+    public init(measurements: [GazeMeasurement]) {
+        let n = Double(max(measurements.count, 1))
+        var centre = [Double](repeating: 0, count: 6)
+        var scale = [Double](repeating: 0, count: 6)
+        for m in measurements {
+            for (i, x) in m.inputs.enumerated() { centre[i] += x / n }
+        }
+        for m in measurements {
+            for (i, x) in m.inputs.enumerated() { scale[i] += (x - centre[i]) * (x - centre[i]) / n }
+        }
+        self.centre = centre
+        self.scale = scale.map { $0 > 1e-12 ? $0.squareRoot() : 1 }
+    }
+
+    public func standardise(_ raw: [Double]) -> [Double] {
+        zip(zip(raw, centre), scale).map { ($0.0 - $0.1) / $1 }
     }
 }
 
@@ -132,14 +172,19 @@ public struct GazeMeasurement: Codable, Sendable, Equatable {
     public let headYaw: Double
     public let headPitch: Double
     /// ARKit's eye-direction blend shapes folded to one horizontal and one vertical term.
-    /// Zero when they were not captured.
+    /// Recorded, not fitted. Zero when they were not captured.
     public let lookU: Double
     public let lookV: Double
+    /// The head's forward direction as ratios in the same frame and units as `u` and `v`.
+    /// The model's fixed-gain term; see `GazeBasis`.
+    public let headU: Double
+    public let headV: Double
 
     public init(
         u: Double, v: Double, eyeX: Double, eyeY: Double, distance: Double,
         headYaw: Double = 0, headPitch: Double = 0,
-        lookU: Double = 0, lookV: Double = 0
+        lookU: Double = 0, lookV: Double = 0,
+        headU: Double = 0, headV: Double = 0
     ) {
         self.u = u
         self.v = v
@@ -150,12 +195,24 @@ public struct GazeMeasurement: Codable, Sendable, Equatable {
         self.headPitch = headPitch
         self.lookU = lookU
         self.lookV = lookV
+        self.headU = headU
+        self.headV = headV
     }
+
+    /// The eye's rotation within the head, as direction ratios: what the correction is
+    /// actually fitted on.
+    public var eyeInHeadU: Double { u - headU }
+    public var eyeInHeadV: Double { v - headV }
+
+    /// The model inputs in the order `GazeInputScaling` and `GazeInputRange` use: the
+    /// eye-in-head angle first, then the rest for the record.
+    var inputs: [Double] { [eyeInHeadU, eyeInHeadV, headU, headV, lookU, lookV] }
 
     public init?(
         _ estimate: GazeRay.Estimate,
         headYaw: Double = 0, headPitch: Double = 0,
-        lookU: Double = 0, lookV: Double = 0
+        lookU: Double = 0, lookV: Double = 0,
+        headU: Double = 0, headV: Double = 0
     ) {
         let distance = estimate.viewingDistance
         guard distance > 0.05, distance < 2.0 else { return nil }
@@ -168,7 +225,9 @@ public struct GazeMeasurement: Codable, Sendable, Equatable {
             headYaw: headYaw,
             headPitch: headPitch,
             lookU: lookU,
-            lookV: lookV
+            lookV: lookV,
+            headU: headU,
+            headV: headV
         )
     }
 }
@@ -240,22 +299,31 @@ public struct GazeInputRange: Codable, Sendable, Equatable {
         self.lookV = lookV
     }
 
+    /// Spans of `GazeMeasurement.inputs`. `u` and `v` here are the eye-in-head angle, the
+    /// two the correction is fitted on; `yaw` and `pitch` hold the head direction ratios.
     public init?(measurements: [GazeMeasurement]) {
         guard !measurements.isEmpty else { return nil }
-        func span(_ values: [Double]) -> ClosedRange<Double> {
-            (values.min() ?? 0)...(values.max() ?? 0)
+        let inputs = measurements.map(\.inputs)
+        func span(_ i: Int) -> ClosedRange<Double> {
+            let values = inputs.map { $0[i] }
+            return (values.min() ?? 0)...(values.max() ?? 0)
         }
-        self.init(
-            u: span(measurements.map(\.u)), v: span(measurements.map(\.v)),
-            yaw: span(measurements.map(\.headYaw)), pitch: span(measurements.map(\.headPitch)),
-            lookU: span(measurements.map(\.lookU)), lookV: span(measurements.map(\.lookV))
-        )
+        self.init(u: span(0), v: span(1), yaw: span(2), pitch: span(3), lookU: span(4), lookV: span(5))
     }
 
     /// Holds a value inside the calibrated span plus margin.
     public static func bound(_ value: Double, to range: ClosedRange<Double>) -> Double {
         let slack = (range.upperBound - range.lowerBound) * margin
         return min(max(value, range.lowerBound - slack), range.upperBound + slack)
+    }
+
+    /// Every input held inside its span, in the order `GazeMeasurement.inputs` uses.
+    func bound(_ raw: [Double]) -> [Double] {
+        [
+            Self.bound(raw[0], to: u), Self.bound(raw[1], to: v),
+            Self.bound(raw[2], to: yaw), Self.bound(raw[3], to: pitch),
+            Self.bound(raw[4], to: lookU), Self.bound(raw[5], to: lookV),
+        ]
     }
 }
 
@@ -285,6 +353,9 @@ public struct GazeModel: Codable, Sendable, Equatable {
     /// What the inputs spanned during calibration. Nil on models saved before this existed,
     /// which then predict without bounds as they always did.
     public let inputRange: GazeInputRange?
+    /// How the inputs were centred and scaled before fitting. Nil means the model was fitted
+    /// on raw inputs, which older saved models were.
+    public let scaling: GazeInputScaling?
 
     /// **Accuracy.** Offset between a target and the *mean* estimate while the eyes were on
     /// it, in screen points, measured on targets held out of the fit.
@@ -321,33 +392,44 @@ public struct GazeModel: Codable, Sendable, Equatable {
     public let calibratedDistanceRange: ClosedRange<Double>
     public let createdAt: Date
 
-    /// The linear terms are free to extrapolate: an angular model is exactly the kind of
-    /// thing that should still be right a little beyond the grid. Everything else, the
-    /// curvature, the head-pose and the eye-shape terms, is held at the edge of what was
-    /// seen during calibration, because outside that range it is unknown, and an unknown
-    /// multiplied by a large coefficient is how a dot ends up three screens to the right.
-    public func correct(
-        u: Double, v: Double, yaw: Double = 0, pitch: Double = 0,
-        lookU: Double = 0, lookV: Double = 0
-    ) -> (u: Double, v: Double) {
-        let terms: [Double]
-        if let r = inputRange {
-            terms = basis.angularTerms(
-                u: u, v: v,
-                yaw: GazeInputRange.bound(yaw, to: r.yaw),
-                pitch: GazeInputRange.bound(pitch, to: r.pitch),
-                lookU: GazeInputRange.bound(lookU, to: r.lookU),
-                lookV: GazeInputRange.bound(lookV, to: r.lookV),
-                boundedU: GazeInputRange.bound(u, to: r.u),
-                boundedV: GazeInputRange.bound(v, to: r.v)
-            )
-        } else {
-            terms = basis.angularTerms(u: u, v: v, yaw: yaw, pitch: pitch, lookU: lookU, lookV: lookV)
+    /// Inside the calibrated range the correction is evaluated as fitted. Beyond it, the
+    /// gaze inputs are held at the edge and the correction **continues along its slope
+    /// there**, so a quadratic becomes a straight line once it leaves the data and an
+    /// angular model still extrapolates off the display the way it should. The head-pose
+    /// and eye-shape covariates are simply held, because outside what was seen they are
+    /// unknown.
+    ///
+    /// All terms are evaluated at the same point. An earlier version held only the
+    /// quadratic inputs while letting the linear ones run, and that broke the cancellation
+    /// an ill-conditioned fit depends on: a whole recording landed five screens away. The
+    /// terms of a fitted polynomial are not separately meaningful and must not be treated
+    /// as if they were.
+    public func correct(u: Double, v: Double, headU: Double, headV: Double) -> (u: Double, v: Double) {
+        let scaling = scaling ?? .identity
+        let raw = [u - headU, v - headV, headU, headV, 0, 0]
+        let z = scaling.standardise(raw)
+
+        guard let range = inputRange else {
+            let terms = basis.angularTerms(z)
+            return (headU + dot(terms, uCoefficients), headV + dot(terms, vCoefficients))
         }
-        return (
-            u: zip(terms, uCoefficients).reduce(0) { $0 + $1.0 * $1.1 },
-            v: zip(terms, vCoefficients).reduce(0) { $0 + $1.0 * $1.1 }
-        )
+
+        let zb = scaling.standardise(range.bound(raw))
+        let terms = basis.angularTerms(zb)
+        var cu = dot(terms, uCoefficients)
+        var cv = dot(terms, vCoefficients)
+        for axis in 0..<2 where z[axis] != zb[axis] {
+            let gradient = basis.angularTermGradient(zb, axis: axis)
+            let step = z[axis] - zb[axis]
+            cu += step * dot(gradient, uCoefficients)
+            cv += step * dot(gradient, vCoefficients)
+        }
+        // The head passes through with a gain of one. It is a direction, not a parameter.
+        return (headU + cu, headV + cv)
+    }
+
+    private func dot(_ a: [Double], _ b: [Double]) -> Double {
+        zip(a, b).reduce(0) { $0 + $1.0 * $1.1 }
     }
 
     /// Where the corrected gaze lands, in nominal camera-space metres, with the solved
@@ -355,8 +437,7 @@ public struct GazeModel: Codable, Sendable, Equatable {
     public func screenPlaneHit(for measurement: GazeMeasurement) -> CGPoint {
         let corrected = correct(
             u: measurement.u, v: measurement.v,
-            yaw: measurement.headYaw, pitch: measurement.headPitch,
-            lookU: measurement.lookU, lookV: measurement.lookV
+            headU: measurement.headU, headV: measurement.headV
         )
         return CGPoint(
             x: measurement.eyeX + measurement.distance * corrected.u - cameraOffsetX,
@@ -425,25 +506,26 @@ public enum GazeModelFitter {
         public let basis: GazeBasis
     }
 
-    /// Shrinkage strengths tried for every model shape. Zero is included so an
-    /// unregularised fit can win when the data genuinely supports it.
+    /// Shrinkage strengths tried for every model shape. `LeastSquares.solve` scales the
+    /// penalty to the mean diagonal of the normal matrix, so these are fractions of the
+    /// data's own scale. With standardised inputs every column now has the same scale, so
+    /// one value shrinks every term equally, which the raw-input fit never managed. Zero is
+    /// included so an unregularised fit can win when the data genuinely supports it.
     static let ridgeGrid: [Double] = [0, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
+
+    /// How much better a model with more parameters must be to displace a simpler one,
+    /// as a fraction of the simpler one's held-out error, with a floor in points.
+    ///
+    /// Cross-validation on a grid only tests the model inside the grid. In use the eyes go
+    /// beyond it, and there a simpler model is safer. So the simplest model within this
+    /// margin of the best wins, not the best.
+    static let parsimonyMargin = 0.08
+    static let parsimonyFloorPoints = 3.0
 
     /// Minimum spread in one over the distance before the camera position can be solved.
     /// Roughly six centimetres of movement at normal holding distances.
     static let minimumInverseDistanceSpread = 0.25
 
-    /// Minimum head rotation range, in radians, before pose terms are offered. About 6°.
-    ///
-    /// Was 1.7°, and that was the cause of the first recording's wild dot: pose
-    /// coefficients fitted on two degrees of variation, then evaluated on the ten degrees a
-    /// head and a hand produce in use. Head pose changes relative to the camera whenever
-    /// the phone turns, so an unbounded pose term is also a phone-motion amplifier.
-    static let minimumHeadPoseSpread = 0.10
-
-    /// Minimum range of the folded eye-direction blend shapes, on their 0...1 scale, before
-    /// they are offered as inputs. Below this they were not captured or did not move.
-    static let minimumEyeLookSpread = 0.15
 
     /// Fits every combination of gaze source, basis shape and shrinkage, scores each by
     /// cross-validation, and returns them best first.
@@ -465,31 +547,12 @@ public enum GazeModelFitter {
             guard let low = distances.min(), let high = distances.max() else { continue }
             let inverseSpread = (1 / low) - (1 / high)
 
-            let yaws = usable.compactMap { $0.measurement(for: source)?.headYaw }
-            let pitches = usable.compactMap { $0.measurement(for: source)?.headPitch }
-            let poseSpread = max(
-                (yaws.max() ?? 0) - (yaws.min() ?? 0),
-                (pitches.max() ?? 0) - (pitches.min() ?? 0)
-            )
-
-            let looksU = usable.compactMap { $0.measurement(for: source)?.lookU }
-            let looksV = usable.compactMap { $0.measurement(for: source)?.lookV }
-            let lookSpread = max(
-                (looksU.max() ?? 0) - (looksU.min() ?? 0),
-                (looksV.max() ?? 0) - (looksV.min() ?? 0)
-            )
-
             let inputRange = GazeInputRange(measurements: usable.compactMap { $0.measurement(for: source) })
 
             for basis in GazeBasis.allCases {
                 // Solving for the camera position needs real distance variation, otherwise
                 // it is indistinguishable from a constant angular offset.
                 if basis.solvesCameraOffset, inverseSpread < minimumInverseDistanceSpread { continue }
-                // Head pose terms are only identifiable if the head actually moved. Fitting
-                // them to a constant would just add noise dressed up as signal.
-                if basis.usesHeadPose, poseSpread < minimumHeadPoseSpread { continue }
-                // Likewise the eye-direction shapes: a column that never moved is noise.
-                if basis.usesEyeLook, lookSpread < minimumEyeLookSpread { continue }
                 // Leaving a group out must still leave the fit over-determined.
                 let smallest = groups.count - 1
                 guard usable.count - (usable.count / max(groups.count, 1)) >= basis.parameterCount + 1,
@@ -498,6 +561,10 @@ public enum GazeModelFitter {
                 for ridge in ridgeGrid {
                     guard
                         let solution = solve(points: usable, source: source, basis: basis, geometry: geometry, ridge: ridge),
+                        // An eye that turns right must map right. A fit whose gain along
+                        // either axis comes out zero or negative has found a coincidence
+                        // in the data, not the eye, and is refused whatever its score.
+                        solution.diagonalGain.u > 0, solution.diagonalGain.v > 0,
                         let score = groupedCrossValidation(
                             points: usable, groups: groups, source: source,
                             basis: basis, geometry: geometry, ridge: ridge
@@ -516,6 +583,7 @@ public enum GazeModelFitter {
                                 cameraOffsetY: solution.offsetY,
                                 ridge: ridge,
                                 inputRange: inputRange,
+                                scaling: solution.scaling,
                                 accuracyPoints: score.accuracy,
                                 accuracyDegrees: degrees(
                                     points: score.accuracy, distance: meanDistance, geometry: geometry
@@ -542,7 +610,8 @@ public enum GazeModelFitter {
     }
 
     public static func best(points: [GazeCalibrationPoint], geometry: ScreenGeometry) -> GazeModel? {
-        guard let winner = rank(points: points, geometry: geometry).first?.model else { return nil }
+        let ranked = rank(points: points, geometry: geometry)
+        guard let winner = choose(from: ranked)?.model else { return nil }
         let inSample = accuracy(of: winner, on: points, geometry: geometry)?.mean ?? 0
         return GazeModel(
             source: winner.source,
@@ -553,6 +622,7 @@ public enum GazeModelFitter {
             cameraOffsetY: winner.cameraOffsetY,
             ridge: winner.ridge,
             inputRange: winner.inputRange,
+            scaling: winner.scaling,
             accuracyPoints: winner.accuracyPoints,
             accuracyDegrees: winner.accuracyDegrees,
             worstTargetPoints: winner.worstTargetPoints,
@@ -565,6 +635,24 @@ public enum GazeModelFitter {
             calibratedDistanceRange: winner.calibratedDistanceRange,
             createdAt: winner.createdAt
         )
+    }
+
+    /// The simplest candidate whose held-out error is within the parsimony margin of the
+    /// best. Ties on parameter count go to the lower error, then to the stronger shrinkage.
+    static func choose(from ranked: [Candidate]) -> Candidate? {
+        guard let top = ranked.first else { return nil }
+        let limit = top.model.accuracyPoints + max(top.model.accuracyPoints * parsimonyMargin, parsimonyFloorPoints)
+        return ranked
+            .filter { $0.model.accuracyPoints <= limit }
+            .min { a, b in
+                if a.basis.parameterCount != b.basis.parameterCount {
+                    return a.basis.parameterCount < b.basis.parameterCount
+                }
+                if a.model.accuracyPoints != b.model.accuracyPoints {
+                    return a.model.accuracyPoints < b.model.accuracyPoints
+                }
+                return a.model.ridge > b.model.ridge
+            }
     }
 
     /// Sample-to-sample scatter while the eyes were fixed on one target, in screen points.
@@ -665,6 +753,10 @@ public enum GazeModelFitter {
         let v: [Double]
         let offsetX: Double
         let offsetY: Double
+        let scaling: GazeInputScaling
+        /// Mean slope of corrected horizontal against measured horizontal, and the same
+        /// for vertical, in raw units. Physics requires both to be positive.
+        let diagonalGain: (u: Double, v: Double)
     }
 
     static func solve(
@@ -677,13 +769,17 @@ public enum GazeModelFitter {
         var design: [[Double]] = []
         var requiredU: [Double] = []
         var requiredV: [Double] = []
+        let measurements = points.compactMap { $0.measurement(for: source) }
+        let scaling = GazeInputScaling(measurements: measurements)
 
         for point in points {
             guard let measurement = point.measurement(for: source) else { continue }
             let targetMetres = geometry.cameraMetres(fromNormalised: point.target)
-            design.append(basis.designRow(for: measurement))
-            requiredU.append((Double(targetMetres.x) - measurement.eyeX) / measurement.distance)
-            requiredV.append((Double(targetMetres.y) - measurement.eyeY) / measurement.distance)
+            design.append(basis.designRow(for: measurement, scaling: scaling))
+            // The correction is fitted on the eye-in-head angle, against the eye-in-head
+            // angle the target demands: the head direction is taken off both sides.
+            requiredU.append((Double(targetMetres.x) - measurement.eyeX) / measurement.distance - measurement.headU)
+            requiredV.append((Double(targetMetres.y) - measurement.eyeY) / measurement.distance - measurement.headV)
         }
 
         guard
@@ -702,7 +798,23 @@ public enum GazeModelFitter {
             guard abs(offsetX) < 0.02, abs(offsetY) < 0.02 else { return nil }
         }
 
-        return Solution(u: u, v: v, offsetX: offsetX, offsetY: offsetY)
+        var gainU = 0.0
+        var gainV = 0.0
+        for measurement in measurements {
+            let z = scaling.standardise(measurement.inputs)
+            gainU += zipDot(basis.angularTermGradient(z, axis: 0), u) / scaling.scale[0]
+            gainV += zipDot(basis.angularTermGradient(z, axis: 1), v) / scaling.scale[1]
+        }
+        let n = Double(max(measurements.count, 1))
+
+        return Solution(
+            u: u, v: v, offsetX: offsetX, offsetY: offsetY, scaling: scaling,
+            diagonalGain: (gainU / n, gainV / n)
+        )
+    }
+
+    private static func zipDot(_ a: [Double], _ b: [Double]) -> Double {
+        zip(a, b).reduce(0) { $0 + $1.0 * $1.1 }
     }
 
     private static func groupedCrossValidation(
@@ -738,6 +850,7 @@ public enum GazeModelFitter {
                 cameraOffsetY: solution.offsetY,
                 ridge: ridge,
                 inputRange: nil,
+                scaling: solution.scaling,
                 accuracyPoints: 0,
                 accuracyDegrees: 0,
                 worstTargetPoints: 0,
@@ -782,7 +895,9 @@ public enum GazeModelFitter {
 /// Persists the model between launches so a participant is not recalibrated for every
 /// build. Storage moves into the session database with the storage milestone.
 public enum GazeModelStore {
-    private static let key = "interactionFingerprint.gazeModel.v3"
+    /// v4: the model structure changed to head plus eye-in-head, and the axes were
+    /// corrected. Older models would decode but predict nonsense, so they are not loaded.
+    private static let key = "interactionFingerprint.gazeModel.v4"
 
     public static func load(from defaults: UserDefaults = .standard) -> GazeModel? {
         guard let data = defaults.data(forKey: key) else { return nil }

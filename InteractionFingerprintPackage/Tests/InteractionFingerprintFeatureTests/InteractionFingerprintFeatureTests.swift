@@ -20,6 +20,12 @@ private struct SyntheticObserver {
     var vOffset = -0.06
     var eyeX = 0.010
     var eyeY = -0.040
+    /// Where the head points, as direction ratios. ARKit reports this at full strength.
+    var headU = 0.030
+    var headV = -0.050
+    /// The fraction of the eyes' true rotation within the head that ARKit reports. About a
+    /// fifth on the real device, which is why the head has to be in the model.
+    var eyeGain = 0.2
     /// Where the camera really is relative to where the nominal geometry assumes it is.
     /// On a Dynamic Island iPhone the camera sits inside the display area and off centre,
     /// so this is millimetres, not zero, and it is a distance rather than an angle.
@@ -35,12 +41,18 @@ private struct SyntheticObserver {
         let trueY = Double(nominal.y) + cameraOffsetY
         let trueU = (trueX - eyeX) / distance
         let trueV = (trueY - eyeY) / distance
+        // What the sensor reports: the head direction, plus a compressed, offset and scaled
+        // version of the eyes' rotation within the head.
+        let eyeInHeadU = trueU - headU
+        let eyeInHeadV = trueV - headV
         return GazeMeasurement(
-            u: uScale * trueU + uOffset,
-            v: vScale * trueV + vOffset,
+            u: headU + eyeGain * (uScale * eyeInHeadU + uOffset),
+            v: headV + eyeGain * (vScale * eyeInHeadV + vOffset),
             eyeX: eyeX,
             eyeY: eyeY,
-            distance: distance
+            distance: distance,
+            headU: headU,
+            headV: headV
         )
     }
 
@@ -728,7 +740,9 @@ func fixationAveragingBeatsSingleSamples() throws {
     )
     // Analysis works on fixations, not raw samples, so this is the number that governs
     // whether two areas of interest can be told apart.
-    #expect(model.fixationErrorPoints(samples: 18) < model.accuracyPoints)
+    // The synthetic observer is noise free, so both figures sit at numerical zero; the
+    // claim is that aggregating never makes things worse. The noisy case is covered below.
+    #expect(model.fixationErrorPoints(samples: 18) <= model.accuracyPoints + 1e-6)
     #expect(model.fixationErrorPoints(samples: 1) == model.perSampleErrorPoints)
 }
 
@@ -797,74 +811,79 @@ func fixationErrorApproachesTheBiasFloor() throws {
     #expect(abs(huge - model.biasPoints) < 0.5)
 }
 
-@Test("Head pose terms are refused when the head never moved")
-func headPoseTermsNeedHeadMovement() throws {
+@Test("The head direction is always in the model and passes through with a gain of one")
+func headDirectionPassesThroughUnscaled() throws {
     let observer = SyntheticObserver()
-    let model = try #require(
-        GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry)
-    )
-    // Every synthetic frame has zero yaw and pitch, so those columns carry no information
-    // and fitting them would be inventing signal.
-    #expect(!model.basis.usesHeadPose)
-    // And the bar is real head movement, about six degrees, not the tremor of holding still.
-    #expect(GazeModelFitter.minimumHeadPoseSpread >= 0.1)
+    let model = try #require(GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry))
+    #expect(model.basis.usesHeadPose)
+    #expect(model.summary.contains("head"))
+    // Turn the head by δ with the eyes fixed in the head: the measured gaze moves by δ,
+    // the head direction moves by δ, and so must the corrected gaze. Exactly δ, not 5δ.
+    let base = model.correct(u: 0.04, v: -0.03, headU: 0.03, headV: -0.05)
+    let turned = model.correct(u: 0.04 + 0.1, v: -0.03, headU: 0.03 + 0.1, headV: -0.05)
+    #expect(abs((turned.u - base.u) - 0.1) < 1e-9)
+    #expect(abs(turned.v - base.v) < 1e-9)
 }
 
-@Test("Eye-direction shape terms are refused when they were never captured")
-func eyeLookTermsNeedVariation() throws {
-    let observer = SyntheticObserver()
-    let model = try #require(
-        GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry)
-    )
-    // Every synthetic frame carries zero for the folded shapes, so they are not offered.
-    #expect(!model.basis.usesEyeLook)
-    #expect(!model.summary.contains("look"))
-}
-
-@Test("Eye-direction shapes are chosen when they carry the gaze and the eye transform does not")
-func eyeLookTermsAreUsedWhenInformative() throws {
-    // A person whose eye transforms report nothing useful, while the expression shapes
-    // track where they look exactly. The fit must discover that on its own.
-    let geometry = ScreenGeometry(pointSize: CGSize(width: 393, height: 852), displayScale: 3)
-    let eyeX = 0.01, eyeY = -0.04
-    var points: [GazeCalibrationPoint] = []
-    for (index, target) in GazeCalibrationRun.targets.enumerated() {
-        for distance in [0.32, 0.46] {
-            let metres = geometry.cameraMetres(fromNormalised: target)
-            let trueU = (Double(metres.x) - eyeX) / distance
-            let trueV = (Double(metres.y) - eyeY) / distance
-            for _ in 0..<12 {
-                let m = GazeMeasurement(
-                    u: 0.05, v: -0.02, eyeX: eyeX, eyeY: eyeY, distance: distance,
-                    lookU: 0.9 * trueU + 0.1, lookV: 0.8 * trueV - 0.05
-                )
-                points.append(GazeCalibrationPoint(
-                    target: target, targetIndex: index, convergence: m, perEye: m, headYaw: 0, headPitch: 0
-                ))
-            }
-        }
+@Test("A compressed eye signal is recovered exactly through the head-plus-eye structure")
+func compressedEyeSignalIsRecovered() throws {
+    var observer = SyntheticObserver()
+    observer.eyeGain = 0.18
+    let model = try #require(GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry))
+    #expect(model.accuracyPoints < 0.5)
+    for target in GazeCalibrationRun.targets {
+        let hit = observer.geometry.normalised(fromCameraMetres: model.screenPlaneHit(for: observer.measurement(lookingAt: target, from: 0.38)))
+        #expect(abs(Double(hit.x) - Double(target.x)) < 1e-6)
+        #expect(abs(Double(hit.y) - Double(target.y)) < 1e-6)
     }
-    let model = try #require(GazeModelFitter.best(points: points, geometry: geometry))
-    #expect(model.basis.usesEyeLook)
-    #expect(model.summary.contains("look"))
-    #expect(model.accuracyPoints < 2)
 }
 
-@Test("Head-pose and curvature terms are held at the edge of the calibrated range, the linear terms are not")
-func predictionDoesNotExtrapolateNonlinearTerms() {
-    // The situation from the first recording: a large pose coefficient fitted on almost
-    // no head movement. Terms: [1, u, v, u², v², uv, yaw, pitch].
-    let basis = GazeBasis(order: 2, solvesCameraOffset: false, usesHeadPose: true)
+@Test("The eye-direction blend shapes are recorded but never fitted")
+func eyeLookShapesAreNotModelInputs() {
+    #expect(GazeBasis.allCases.allSatisfy { !$0.usesEyeLook })
+    #expect(GazeBasis.allCases.allSatisfy { $0.usesHeadPose })
+    #expect(GazeBasis.allCases.count == 4)
+    #expect(TrackedBlendShapes.keys.contains("eyeLookUp_L"))
+}
+
+@Test("Camera axes are rotated into the display frame: display X is camera y, display Y is minus camera x")
+func displayFrameRotation() {
+    // A point 10 cm along the camera's y axis, 30 cm in front: to the participant's right.
+    let right = DisplayFrame.vector(SIMD3<Float>(0, 0.1, -0.3))
+    #expect(abs(right.x - 0.1) < 1e-6 && abs(right.y) < 1e-6 && abs(right.z + 0.3) < 1e-6)
+    // A point 10 cm along the camera's x axis, the phone's long axis towards the bottom: down the screen.
+    let down = DisplayFrame.vector(SIMD3<Float>(0.1, 0, -0.3))
+    #expect(abs(down.x) < 1e-6 && abs(down.y + 0.1) < 1e-6)
+    // A proper rotation, not a mirror.
+    let r = DisplayFrame.fromCamera
+    let det = simd_determinant(simd_float3x3(
+        SIMD3(r.columns.0.x, r.columns.0.y, r.columns.0.z),
+        SIMD3(r.columns.1.x, r.columns.1.y, r.columns.1.z),
+        SIMD3(r.columns.2.x, r.columns.2.y, r.columns.2.z)
+    ))
+    #expect(abs(det - 1) < 1e-6)
+    // Transforming a pose agrees with transforming its translation.
+    var pose = matrix_identity_float4x4
+    pose.columns.3 = SIMD4(0.1, 0.02, -0.3, 1)
+    let moved = DisplayFrame.transform(pose).columns.3
+    let expected = DisplayFrame.vector(SIMD3(0.1, 0.02, -0.3))
+    #expect(abs(moved.x - expected.x) < 1e-6 && abs(moved.y - expected.y) < 1e-6 && abs(moved.z - expected.z) < 1e-6)
+}
+
+@Test("Beyond the calibrated range the correction continues along its slope instead of exploding")
+func predictionContinuesLinearlyBeyondTheRange() {
+    // Terms on standardised eye-in-head inputs: [1, u, v, u², v², uv]. Identity scaling and
+    // a zero head so the arithmetic can be checked by hand.
+    let basis = GazeBasis(order: 2, solvesCameraOffset: false)
     let range = GazeInputRange(
-        u: -0.2...0.2, v: -0.3...0.1, yaw: -0.01...0.01, pitch: -0.01...0.01,
-        lookU: 0...0, lookV: 0...0
+        u: -0.2...0.2, v: -0.3...0.1, yaw: 0...0, pitch: 0...0, lookU: 0...0, lookV: 0...0
     )
     func model(_ inputRange: GazeInputRange?) -> GazeModel {
         GazeModel(
             source: .convergence, basis: basis,
-            uCoefficients: [0, 1, 0, 0, 0, 0, 4.0, 0],
-            vCoefficients: [0, 0, 1, 0, 230, 0, 0, 2.4],
-            cameraOffsetX: 0, cameraOffsetY: 0, ridge: 0, inputRange: inputRange,
+            uCoefficients: [0, 1, 0, 0, 0, 0],
+            vCoefficients: [0, 0, 1, 0, 230, 0],
+            cameraOffsetX: 0, cameraOffsetY: 0, ridge: 0, inputRange: inputRange, scaling: .identity,
             accuracyPoints: 0, accuracyDegrees: 0, worstTargetPoints: 0, perSampleErrorPoints: 0,
             inSampleAccuracyPoints: 0, precisionPoints: 0, sampleCount: 0, targetCount: 0,
             meanCalibrationDistance: 0.37, calibratedDistanceRange: 0.3...0.4, createdAt: Date()
@@ -873,21 +892,50 @@ func predictionDoesNotExtrapolateNonlinearTerms() {
     let bounded = model(range)
     let unbounded = model(nil)
 
-    // Ten degrees of yaw, the phone turned in the hand. Unbounded, that is 0.7 in u, about
-    // 26 cm off the side of the screen. Bounded, it is held at the edge of the calibrated
-    // 0.01 rad plus 15% of the 0.02 span, which is 0.013.
-    let turned = bounded.correct(u: 0, v: 0, yaw: 0.17, pitch: 0)
-    let atEdge = bounded.correct(u: 0, v: 0, yaw: 0.013, pitch: 0)
-    #expect(abs(turned.u - atEdge.u) < 1e-9)
-    #expect(abs(unbounded.correct(u: 0, v: 0, yaw: 0.17, pitch: 0).u - 0.68) < 1e-9)
+    // Inside the range the two agree exactly.
+    #expect(abs(bounded.correct(u: 0.1, v: -0.1, headU: 0, headV: 0).v - unbounded.correct(u: 0.1, v: -0.1, headU: 0, headV: 0).v) < 1e-12)
 
-    // The curvature saturates too: v well below the grid uses v² at the boundary.
-    let far = bounded.correct(u: 0, v: -0.9, yaw: 0, pitch: 0)
-    let boundaryV = -0.3 - 0.4 * GazeInputRange.margin
-    #expect(abs(far.v - (-0.9 + 230 * boundaryV * boundaryV)) < 1e-9)
+    // v below the range: the quadratic 230·v² becomes a straight line from the boundary
+    // with the boundary slope 460·vb, instead of exploding.
+    let vb = -0.3 - 0.4 * GazeInputRange.margin
+    let expected = vb + 230 * vb * vb + (1 + 460 * vb) * (-0.9 - vb)
+    #expect(abs(bounded.correct(u: 0, v: -0.9, headU: 0, headV: 0).v - expected) < 1e-9)
+    #expect(abs(unbounded.correct(u: 0, v: -0.9, headU: 0, headV: 0).v - (-0.9 + 230 * 0.81)) < 1e-9)
 
-    // But the linear part still extrapolates, so gaze beyond the grid still moves the estimate.
-    #expect(bounded.correct(u: 0.5, v: 0, yaw: 0, pitch: 0).u > bounded.correct(u: 0.2, v: 0, yaw: 0, pitch: 0).u)
+    // Continuous at the boundary.
+    let just = bounded.correct(u: 0, v: vb - 1e-9, headU: 0, headV: 0).v
+    let at = bounded.correct(u: 0, v: vb, headU: 0, headV: 0).v
+    #expect(abs(just - at) < 1e-6)
+
+    // And the head is added back on top, unbounded, whatever the eye term does.
+    #expect(abs(bounded.correct(u: 0.5, v: 0, headU: 0.5, headV: 0).u - bounded.correct(u: 0, v: 0, headU: 0, headV: 0).u - 0.5) < 1e-9)
+}
+
+@Test("The fit is done on standardised inputs and the stored scaling reproduces it")
+func fitUsesStandardisedInputs() throws {
+    let observer = SyntheticObserver()
+    let model = try #require(GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry))
+    let scaling = try #require(model.scaling)
+    #expect(scaling.centre.count == 6 && scaling.scale.count == 6)
+    // Inputs that never varied pass through with unit scale rather than dividing by zero.
+    #expect(scaling.scale[2] == 1 && scaling.scale[3] == 1)
+    // And the model still lands on the target it was shown.
+    let target = GazeCalibrationRun.targets[4]
+    let hit = observer.geometry.normalised(fromCameraMetres: model.screenPlaneHit(for: observer.measurement(lookingAt: target, from: 0.40)))
+    #expect(abs(Double(hit.x) - Double(target.x)) < 1e-6)
+    #expect(abs(Double(hit.y) - Double(target.y)) < 1e-6)
+}
+
+@Test("The simplest model within the margin wins, not the best")
+func parsimonyPrefersTheSimplerModel() throws {
+    // A person whose error is exactly linear. Every candidate fits within noise; the
+    // quadratic and covariate models must not win on a rounding error.
+    let observer = SyntheticObserver()
+    let model = try #require(GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry))
+    #expect(model.basis.order == 1)
+    #expect(!model.basis.usesEyeLook)
+    // But a term that pays for itself is kept: the camera offset is real in this observer.
+    #expect(model.basis.solvesCameraOffset)
 }
 
 @Test("The fitter records what its inputs spanned")
@@ -896,10 +944,12 @@ func fitterRecordsInputRange() throws {
     let points = observer.calibration()
     let model = try #require(GazeModelFitter.best(points: points, geometry: observer.geometry))
     let range = try #require(model.inputRange)
-    let us = points.compactMap { $0.convergence?.u }
+    // The fitted inputs are the eye-in-head angles.
+    let us = points.compactMap { $0.convergence?.eyeInHeadU }
     #expect(abs(range.u.lowerBound - (us.min() ?? 0)) < 1e-12)
     #expect(abs(range.u.upperBound - (us.max() ?? 0)) < 1e-12)
-    #expect(range.yaw == 0...0)
+    // And the head direction, which never varied in the synthetic run, is on record.
+    #expect(range.yaw == observer.headU...observer.headU)
 }
 
 @Test("A calibration saved before the input range existed still loads, unbounded")
@@ -908,8 +958,10 @@ func modelDecodesWithoutInputRange() throws {
     let model = try #require(GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry))
     var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(model)) as? [String: Any])
     object.removeValue(forKey: "inputRange")
+    object.removeValue(forKey: "scaling")
     let legacy = try JSONDecoder().decode(GazeModel.self, from: JSONSerialization.data(withJSONObject: object))
     #expect(legacy.inputRange == nil)
+    #expect(legacy.scaling == nil)
     #expect(legacy.uCoefficients == model.uCoefficients)
 }
 

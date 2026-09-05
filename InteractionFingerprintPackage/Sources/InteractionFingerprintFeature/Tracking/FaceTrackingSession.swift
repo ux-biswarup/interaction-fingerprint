@@ -72,6 +72,9 @@ public final class FaceTrackingSession {
     // MARK: Private
 
     private let session = ARSession()
+
+    /// The live session, for a view that wants to show what the camera sees.
+    public var arSession: ARSession { session }
     private let proxy = ARSessionProxy()
     private let motion = DeviceMotionMonitor()
     private var gate = MotionGate()
@@ -175,7 +178,11 @@ public final class FaceTrackingSession {
         let signals = Self.signals(from: anchor)
         let eyesOpen = TrackedBlendShapes.eyesOpen(in: signals)
         let look = TrackedBlendShapes.eyeLookTerms(in: signals)
-        let faceInCamera = simd_mul(simd_inverse(frame.camera.transform), anchor.transform)
+        // Face pose relative to the camera, then rotated into the display frame so that
+        // eye position, gaze direction and head angles all share the screen's own axes.
+        let faceInCamera = DisplayFrame.transform(
+            simd_mul(simd_inverse(frame.camera.transform), anchor.transform)
+        )
         let head = Self.headPose(from: faceInCamera)
 
         let convergence = GazeRay.convergenceEstimate(
@@ -192,10 +199,16 @@ public final class FaceTrackingSession {
         )
 
         let convergenceMeasurement = convergence.flatMap {
-            GazeMeasurement($0, headYaw: head.yaw, headPitch: head.pitch, lookU: look.u, lookV: look.v)
+            GazeMeasurement(
+                $0, headYaw: head.yaw, headPitch: head.pitch, lookU: look.u, lookV: look.v,
+                headU: head.forwardU, headV: head.forwardV
+            )
         }
         let perEyeMeasurement = perEye.flatMap {
-            GazeMeasurement($0, headYaw: head.yaw, headPitch: head.pitch, lookU: look.u, lookV: look.v)
+            GazeMeasurement(
+                $0, headYaw: head.yaw, headPitch: head.pitch, lookU: look.u, lookV: look.v,
+                headU: head.forwardU, headV: head.forwardV
+            )
         }
         let reference = convergenceMeasurement ?? perEyeMeasurement
 
@@ -362,13 +375,21 @@ public final class FaceTrackingSession {
     private static func headPose(from transform: simd_float4x4) -> HeadPose {
         let translation = transform.columns.3
         let angles = eulerAngles(from: simd_quatf(transform))
+        // The face anchor's +z points out of the face, towards the phone, the same way the
+        // gaze ray travels, so the same ratios describe it.
+        let forward = transform.columns.2
+        let ratios: (u: Double, v: Double) = forward.z > 1e-3
+            ? (Double(forward.x / forward.z), Double(forward.y / forward.z))
+            : (0, 0)
         return HeadPose(
             x: Double(translation.x),
             y: Double(translation.y),
             z: Double(translation.z),
             pitch: Double(angles.pitch),
             yaw: Double(angles.yaw),
-            roll: Double(angles.roll)
+            roll: Double(angles.roll),
+            forwardU: ratios.u,
+            forwardV: ratios.v
         )
     }
 

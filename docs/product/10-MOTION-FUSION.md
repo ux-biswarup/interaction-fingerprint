@@ -332,6 +332,51 @@ Two further adjustments from the data: the head-turned envelope now has a separa
 limit of 0.60 rad, because 5% of frames were flagged at a pitch of 20° with no yaw, which is
 simply a person looking down at a phone; and drags are no longer reported as taps.
 
+### The third recording, and a fault of my own
+
+The next calibration came out at 55 points, 1.38°, the best so far. The recording made
+with it put **1% of gaze samples on the display**. Median position: five screens to the
+lower left.
+
+Reproducing the app's arithmetic offline from the exported calibration and the recorded raw
+measurements gave the recorded values exactly, so the app did what it was told. Undoing the
+bound gave a median position near the display. The bounding rule introduced after the first
+recording was wrong. It held the quadratic inputs at the calibrated edge while letting the
+linear inputs run free, on the theory that the two kinds of term were separately meaningful.
+They are not. The vertical gaze ratio spans about 0.05 across the whole display, so its
+square is all but collinear with it; the fit had given the pair coefficients of +20 and −25
+that cancelled inside the grid, and freezing one of them released the other. In the third
+session the phone was also held 3 cm to one side, which pushed the horizontal ratio well
+outside anything calibration had seen, and the released term took the estimate with it.
+
+The corrected design, all of it now in place:
+
+1. **Inputs are standardised before fitting**, centred and scaled to unit spread. The
+   columns become comparable, the shrinkage penalty means the same thing for each, and a
+   coefficient's size says something about its importance. The centre and scale are stored
+   with the model.
+2. **Every term is evaluated at the same bounded point.** Beyond the calibrated range the
+   correction **continues along its slope at the boundary**, so a quadratic turns into a
+   straight line where the data ends and an angular model still extrapolates off the
+   display the way it should. Covariates are held, not continued.
+3. **The simplest model within 8% of the best wins.** Cross-validation on a grid only tests
+   a model inside the grid; in use the eyes leave it, and there fewer parameters is safer.
+   The quadratic and the covariate terms now have to earn their place by a clear margin.
+
+Stored calibrations from before this change load and run under the new prediction rule,
+but they were fitted on raw inputs and should be replaced. **Recalibrate.**
+
+### What the exported frames say about the top row
+
+Refitting the exported calibration offline with every available basis, the top row's
+held-out error stays between 115 and 134 points at the far distance under all of them,
+while the bottom row sits at 44 to 57. No choice of model fixes it. The uncorrected
+vertical bias grows smoothly down the screen, which the linear term handles; what is left
+in the top row after correction is worst at the far distance, where the gaze passes
+closest to the camera's own axis. This is a property of the sensor near the sensor, not of
+the fit. For the study it means regions in the top 15% of the display carry roughly twice
+the error of the rest, and any area of interest placed there needs to be sized for it.
+
 ## 10. Calibration in a product
 
 The question was raised whether calibration can be skipped: a shipping product cannot ask
@@ -356,7 +401,110 @@ For the research phase the explicit calibration stays. It is what produces the a
 figure, and gaze without an accuracy figure attached is not evidence. Implicit calibration
 is on the roadmap for the adaptive-interface phase, where it belongs.
 
-## 11. What this does not claim
+## 11. What the exported frames revealed about the sensor
+
+With the calibration frames on disk it became possible to ask what ARKit's gaze signal
+actually contains, rather than how well a model fits it. Three findings, in order of
+consequence.
+
+### The axes were swapped
+
+Across the whole calibration grid, the measured horizontal gaze ratio had a correlation of
+**−0.02** with the true horizontal angle, and the measured vertical ratio of **+0.18** with
+the true vertical. Yet within a target the frames scattered by only 0.1°. A precise signal
+that does not track its own axis is tracking a different one: after removing the head
+direction, the measured horizontal component tracked the *vertical* target position at
+r = −0.69, and the vertical tracked the horizontal at r = −0.68.
+
+Apple documents this. ARKit's camera frame follows the sensor's native landscape
+orientation, and "the x-axis always points along the long axis of the device, even if that
+direction is 'down' relative to the user" ([Apple](https://developer.apple.com/documentation/arkit/arconfiguration/worldalignment/camera)).
+Every earlier build treated that x as running across the screen. The linear calibration
+absorbed the rotation of the *angles* through its cross-terms, which is why anything worked;
+the eye *position* entered unrotated, which is why the two-distance geometry never quite
+closed, why solved camera offsets came out at 80 to 140 mm, and why holding the phone 3 cm
+to one side sent the third recording off the display.
+
+The convention was then chosen from data, not from the documentation. All eight signed axis
+mappings were fitted to the exported frames with head terms included:
+
+| Mapping | Held-out accuracy | Worst target |
+| --- | --- | --- |
+| **display X = camera y, display Y = −camera x** | **49 pt** | **74 pt** |
+| display X = camera x, display Y = −camera y | 53 pt | 85 pt |
+| the previous convention, X = −camera x, Y = camera y | worse than 100 pt | |
+| remaining five | 105 to 133 pt | |
+
+With the winning mapping the fitted eye gains land on the matched axes, 5.4 horizontal and
+5.0 vertical, with small cross-terms. `DisplayFrame` now applies this rotation to the face
+pose before anything else is computed, so eye position, gaze direction and head angles all
+share the screen's own axes.
+
+### ARKit reports the head at full strength and the eyes at a fifth
+
+Regressing the measured gaze ratio on the head direction and the true angle together
+explains 81 to 89% of its variance, and the coefficient on the true angle is **0.05 to
+0.19** while the head's is near one. Across the whole 14 cm display the measured eye angle
+moves by 1° to 3° when the eyes actually rotate through 10° to 20°. The eyes' rotation
+within the head is being reported at roughly one fifth of its size; the head's direction is
+reported faithfully.
+
+This is why every calibration that reached below 100 points had head-pose terms in it, and
+why the covariate-free models sit at 105 to 150 points however the axes are arranged. The
+head terms were never leakage. They were the model finding the only way to express a
+signal whose two components arrive with different gains. What was wrong was letting the
+fitter discover that structure freely, with no bounds, and letting the eye-direction blend
+shapes in beside it as a collinear second readout.
+
+The model is now fixed by physics rather than fitted:
+
+```
+corrected gaze = head direction + f( measured gaze − head direction )
+```
+
+The head direction is the face anchor's forward axis in the display frame, the same units
+as the gaze ratios, and it passes through with a gain of exactly one because it is a
+direction. Only `f`, the correction of the eye-in-head angle, has free parameters: linear
+or quadratic, with or without the solved camera position, standardised, bounded with
+linear continuation, and required to have a positive gain on both axes. The eye-direction
+blend shapes stay in the recorded data and are no longer offered to the fitter.
+
+### Grid cross-validation does not predict free viewing
+
+Every accuracy figure reported so far was held-out error *on the calibration grid*. The
+recordings carry 43 taps, and a person looks at what they are about to tap, so the median
+distance between the tap and the gaze in the half-second before it is a ground truth for
+free viewing that the grid never sees. Fitting on the exported calibration and scoring
+every model structure that way:
+
+| Model | Grid CV | Gaze-before-tap, session 2 | session 3 | On the display |
+| --- | --- | --- | --- | --- |
+| Head + eye-in-head, corrected axes, linear | 124 pt | **223 pt** | **228 pt** | 73 to 87% |
+| Free head terms, corrected axes (best on the grid) | 83 pt | 377 pt | 498 pt | 40 to 52% |
+| No head term, any axes | 116 to 153 pt | 708 pt and worse | | under 20% |
+| What the app recorded at the time | | 310 pt | 5,106 pt | 72% / 1% |
+
+The structure that scores worst on the grid among the three is the one that works in the
+world, and it transfers unchanged from one day's calibration to a session recorded with a
+different one. The grid is a necessary check and a poor judge. From here, gaze-before-tap
+error is the figure that decides between models, and the accuracy number on the calibration
+screen is understood as what it is: performance on the grid, under the grid's conditions.
+
+Calibrating from the taps themselves, leaving one tap out, reaches a median of **164 pt**.
+Better than the grid transfer, and the mechanism the product path in section 10 depends on,
+but it says the free-viewing floor of this sensor for this participant is currently around
+2° to 3°, not the 1.4° the grid reports.
+
+## 12. Seeing what the system sees
+
+The instrument screen now has a Screen / Camera switch while the tracker runs. Camera shows
+the front camera's image with the tracked face mesh, the head's forward axis in cyan and
+each eye's line of sight to ARKit's convergence point in yellow, with the gaze dot drawn
+over it exactly as on the plain screen. The two components of the model are the two colours:
+when the dot is wrong, the picture says whether the head line or the eye lines were wrong,
+which is the question that decides what to fix. Nothing on that screen is recorded.
+
+## 13. What this does not claim
 
 It does not claim the gyroscope makes gaze more accurate. It cannot; it never sees the eye.
 It claims that the phone's motion is now measured in the quantity and units that matter,

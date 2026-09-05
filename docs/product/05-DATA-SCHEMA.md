@@ -115,10 +115,11 @@ columns on every row.
 | `reversals` | `scroll` | Running count. Steady scrolling is reading; back and forth is searching. |
 | `ambientIntensity` | `ambient_light` | Lumens. A covariate, not a signal: a darker room otherwise looks like a participant difference. |
 | `colourTemperature` | `ambient_light` | Kelvin. |
-| `eyeX`, `eyeY`, `eyeZ` | `gaze` | Eye midpoint in camera-space metres. `eyeZ` is negative, in front of the camera; its magnitude is the viewing distance. |
+| `eyeX`, `eyeY`, `eyeZ` | `gaze` | Eye midpoint in metres in the display frame: X to the participant's right, Y up the screen, Z towards the phone. `eyeZ` is negative; its magnitude is the viewing distance. Before 5 September 2026 (evening) these were in ARKit's landscape-native camera frame, with X and Y swapped relative to this; see `10-MOTION-FUSION.md` §11. |
 | `convergenceU`, `convergenceV` | `gaze` | Gaze direction ratios from ARKit's convergence point, dx/dz and dy/dz. The physical measurement behind `x`, `y`. With these and the eye position, a session can be re-mapped offline under a better calibration. |
 | `perEyeU`, `perEyeV` | `gaze` | The same from each eye's own orientation, averaged. |
-| `headYawRad`, `headPitchRad`, `headRollRad` | `gaze` | Head orientation relative to the camera. Note that this changes when the phone turns, not only when the head does. |
+| `headYawRad`, `headPitchRad`, `headRollRad` | `gaze` | Head orientation relative to the phone, in the display frame. Note that this changes when the phone turns, not only when the head does. |
+| `headForwardU`, `headForwardV` | `gaze` | The head's forward direction as ratios in the same units as the gaze angles. The fixed-gain term of the gaze model: corrected gaze = head + f(gaze − head). |
 | `deviceTiltRad` | `gaze` | How far the screen leans back from vertical, radians. 0 upright, π/2 flat facing up. From gravity, so it does not drift. How the phone is held is a covariate the analysis needs; a participant lying down is a different viewing geometry. |
 | `deviceRollRad` | `gaze` | Sideways lean of the phone, radians. Positive when the top leans to the participant's right. |
 | `deviceRotationRadPerS` | `gaze` | Smoothed angular speed of the phone. A hand-steadiness covariate. |

@@ -1,12 +1,13 @@
 import CoreGraphics
 
-/// Physical geometry of the display, in metres, expressed in ARKit camera space.
+/// Physical geometry of the display, in metres, in the **display frame**.
 ///
-/// Camera space has its origin at the front camera, +x to the right of the captured
-/// image, +y up, and the camera looking along -z. The captured front-camera image is not
-/// mirrored, so a point on the user's right appears at negative x. The screen therefore
-/// runs in the opposite direction to the way the user reads it, which is why the
-/// conversions below flip x.
+/// The display frame has its origin at the front camera, +X to the participant's right
+/// along the screen, +Y up the screen, and the participant in front at negative Z. It is
+/// *not* ARKit's camera frame. ARKit's frame follows the sensor's landscape orientation,
+/// with x along the long axis of the phone, and every measurement is rotated into the
+/// display frame by `DisplayFrame` before it reaches this type. See that file for how the
+/// convention was established from data rather than assumed.
 ///
 /// iOS does not expose pixel density, so it is derived from the display scale. Every
 /// Face ID iPhone is 460 ppi at 3x and 326 ppi at 2x, which makes the rule reliable for
@@ -42,21 +43,21 @@ public struct ScreenGeometry: Sendable, Equatable {
         )
     }
 
-    /// Screen position, normalised with the origin at the top left, to camera-space metres.
+    /// Screen position, normalised with the origin at the top left, to display-frame metres.
     public func cameraMetres(fromNormalised point: CGPoint) -> CGPoint {
         CGPoint(
-            x: (0.5 - Double(point.x)) * Double(physicalSize.width),
+            x: (Double(point.x) - 0.5) * Double(physicalSize.width),
             y: -(cameraAboveScreenTop + Double(point.y) * Double(physicalSize.height))
         )
     }
 
-    /// Camera-space metres back to normalised screen position.
+    /// Display-frame metres back to normalised screen position.
     public func normalised(fromCameraMetres point: CGPoint) -> CGPoint {
         let width = Double(physicalSize.width)
         let height = Double(physicalSize.height)
         guard width > 0, height > 0 else { return .zero }
         return CGPoint(
-            x: 0.5 - Double(point.x) / width,
+            x: 0.5 + Double(point.x) / width,
             y: (-Double(point.y) - cameraAboveScreenTop) / height
         )
     }
