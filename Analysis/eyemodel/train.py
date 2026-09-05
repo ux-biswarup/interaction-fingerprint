@@ -70,6 +70,8 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None, help="subjects to read, for a quick run")
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--out", default="eyemodel.pt")
+    ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--augment", action="store_true", help="jitter crops and vary brightness while training")
     args = ap.parse_args()
 
     if args.dataset == "gazecapture":
@@ -88,17 +90,26 @@ def main() -> None:
     dev = device()
     model = EyeInHeadNet(aux_features=aux).to(dev)
     print(f"device {dev}, parameters {parameter_count(model):,}")
-    optimiser = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimiser = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    # Cosine decay to a tenth of the starting rate: the last epochs settle rather than jump.
+    schedule = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=args.epochs, eta_min=args.lr / 10)
+    train_set = make(train, augment=args.augment) if args.dataset == "mpiifacegaze" else make(train)
     loaders = {
-        "train": DataLoader(make(train), batch_size=args.batch, shuffle=True, num_workers=4),
+        "train": DataLoader(train_set, batch_size=args.batch, shuffle=True, num_workers=4),
         "val": DataLoader(make(val), batch_size=args.batch, num_workers=4),
     }
+    best = float("inf")
     for epoch in range(args.epochs):
         tl, td = run_epoch(model, loaders["train"], optimiser, dev, train=True)
         vl, vd = run_epoch(model, loaders["val"], optimiser, dev, train=False)
-        print(f"epoch {epoch + 1}: train loss {tl:.4f} ({td:.2f}°)  held-out loss {vl:.4f} ({vd:.2f}°)")
-    torch.save(model.state_dict(), args.out)
-    print(f"saved {args.out}")
+        schedule.step()
+        marker = ""
+        if vd < best:
+            best = vd
+            torch.save(model.state_dict(), args.out)
+            marker = "  saved"
+        print(f"epoch {epoch + 1}: train loss {tl:.4f} ({td:.2f}°)  held-out loss {vl:.4f} ({vd:.2f}°){marker}", flush=True)
+    print(f"best held-out {best:.2f}° -> {args.out}")
 
 
 if __name__ == "__main__":

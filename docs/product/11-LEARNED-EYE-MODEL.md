@@ -149,12 +149,29 @@ and the head rotation, and the training entry point holds out participants by na
    publication. **Waiting on that request.** Remaining once it arrives: the head-pose
    estimate per frame, since the dataset has none, and validation of the label derivation
    on our own calibration frames, where the truth is known.
-3. **Model.** Scaffolded: a two-branch convolutional network of about 350,000 parameters
-   (`eyemodel/model.py`), a dataset class producing crops and labels, and a training entry
-   point that holds out by the dataset's own person split and reports degrees
-   (`eyemodel/train.py`). It learns a synthetic pupil-position task to under 3° in a test.
-   This Mac has PyTorch with the Metal backend, enough for the first real runs. Held-out
-   error on real people is the number to report before any personalisation.
+3. **Model.** First real result, 6 September 2026, on this Mac's Metal backend. A two-branch
+   network of 195,000 parameters over two 64-pixel grey eye crops plus the head direction,
+   trained three epochs on 14 people, judged on the fifteenth, whom it never saw:
+
+   | | Horizontal | Vertical |
+   | --- | --- | --- |
+   | Correlation with the true eye-in-head angle | **0.966** | 0.806 |
+   | Gain (slope of prediction against truth) | **0.96** | 0.76 |
+   | Error, degrees | 6.79° overall | |
+   | After a per-person linear correction fitted on half that person's frames | 5.72° | |
+   | Constant prediction, what "learned nothing" looks like | 17.0° | |
+
+   Set beside the on-device readouts in §2c: ARKit's transforms report the eye at a gain of
+   about 0.2, the pupil landmarks at 0.37 horizontally and near zero vertically. The network
+   reports it at 0.96 horizontally after three epochs. Vertical is the weaker axis, as it was
+   for every readout; eyelids hide more of the vertical rotation than the horizontal. The
+   absolute degree figures are large because the dataset's eye-in-head range is large, about
+   15° of spread on a laptop at half a metre; on the phone the range is a third of that, and
+   what carries over is the correlation and gain, not the degrees. A 20-epoch run with crop
+   jitter, brightness and contrast variation, a cosine learning-rate schedule and three people
+   held out follows. The known next improvement, if it is needed, is head-pose normalisation
+   of the crops, the standard step in the MPIIGaze line of work, which cancels head roll and
+   distance before the network sees the eye.
 4. **On-device.** Core ML conversion, crop extraction from ARKit frames, 60 Hz timing on the
    iPhone 15, a fourth gaze source in the fitter.
 5. **Judgement.** Recalibrate, record sessions, gaze-before-tap. Go or no-go against 2 cm.
