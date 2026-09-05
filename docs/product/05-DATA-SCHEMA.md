@@ -67,3 +67,65 @@ Derived features must not overwrite raw observations.
 ## Areas of interest
 Map gaze coordinates to semantic UI regions such as:
 `product_image`, `price`, `rating`, `reviews`, `description`, `cta`.
+
+
+## Implemented schema, version 1
+
+One stream. Sensor samples and interaction events share a type and a table, because the
+point of the fingerprint is that they are comparable in time. Splitting them would push the
+join into analysis, where an off-by-one would be invisible.
+
+### Columns on every row
+
+| Column | Meaning |
+| --- | --- |
+| `schemaVersion` | 1. Bumped only with a note in this file. |
+| `sequence` | Gapless within a session. A jump means events were lost, which analysis must be able to see rather than infer. |
+| `timestamp` | Seconds on the device monotonic clock, the same base as `ARFrame.timestamp`. Never `Date()`, which jumps when the system clock is corrected. |
+| `event` | One of the kinds below. |
+| `screen` | `product_list` or `product_detail`. |
+| `target` | The area of interest, or null. |
+| `productID` | The product in view, or null. |
+| `x`, `y` | Normalised to the screen, origin top left. Tap position, or gaze position. |
+| `durationMs` | What just ended: a dwell, a press, a screen visit. |
+| `metrics` | Event-specific numbers. Documented below. |
+| `eyesOpen` | False during a blink. Sample kept so blink rate stays measurable. |
+| `quality` | Why the gaze on this row is or is not trustworthy. |
+| `signals` | Blend-shape coefficients, keyed by ARKit raw value. |
+
+Absent values are written as explicit `null`, never omitted, so pandas receives the same
+columns on every row.
+
+### Event kinds
+
+`session_start`, `session_end`, `screen_appear`, `screen_disappear`, `tap`, `scroll`,
+`back`, `product_viewed`, `product_selected`, `gaze`, `area_enter`, `area_exit`,
+`ambient_light`, `buffer_overflow`.
+
+`buffer_overflow` exists so that a dataset never has an unmarked hole in it.
+
+### Keys inside `metrics`
+
+| Key | On | Meaning |
+| --- | --- | --- |
+| `contactRadiusPt` | `tap` | Radius of the finger's contact patch, in points. A proxy for press firmness on hardware with no force sensor, which is every current iPhone. |
+| `offset` | `scroll` | Content offset in points. |
+| `velocity` | `scroll` | Points per second, signed. |
+| `reversal` | `scroll` | 1 on the row where direction changed. |
+| `reversals` | `scroll` | Running count. Steady scrolling is reading; back and forth is searching. |
+| `ambientIntensity` | `ambient_light` | Lumens. A covariate, not a signal: a darker room otherwise looks like a participant difference. |
+| `colourTemperature` | `ambient_light` | Kelvin. |
+
+### Session record
+
+Carries the session id, app version, device model and screen geometry, the clock anchor
+that converts monotonic time to wall time, the gaze calibration in force, and the verified
+eye laterality. A session without a laterality check cannot support any claim about one eye
+against the other, and a session without a calibration figure cannot be pooled with one
+that has a good figure.
+
+### Files
+
+Two per session, in the app's Documents directory and shareable from the app.
+`session_<uuid>.json` holds the session record and every event. `session_<uuid>.jsonl`
+holds one event per line, which pandas reads with `lines=True`.

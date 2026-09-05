@@ -17,6 +17,15 @@ Taps, scrolls, screen/product IDs, areas of interest, JSON export.
 
 **Exit:** synchronized behavioral + perceptive event stream.
 
+Built. One event stream carries gaze samples and interaction events stamped from a single
+monotonic clock. Areas of interest are declared on the views themselves and gaze is
+attributed to them on device, while the raw coordinate is kept so a recording can be
+re-attributed if the region definitions change. Touch contact radius and press duration,
+scroll velocity and direction reversals, and ambient light are all recorded. Sessions export
+as JSON and newline-delimited JSON.
+
+Not yet verified with a real recording on device. That is the remaining gate.
+
 ## Phase 3 — Fingerprint
 Normalize events, derive features, summarize sessions, visualize fingerprints.
 

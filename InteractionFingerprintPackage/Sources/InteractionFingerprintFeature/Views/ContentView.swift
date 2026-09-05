@@ -10,6 +10,8 @@ public struct ContentView: View {
     @State private var calibration: GazeCalibrationRun?
     @State private var lateralityCheck: EyeLateralityCheck?
     @State private var laterality = EyeLateralityStore.load()
+    @State private var isRunningStudy = false
+    @State private var lastExport: SessionExporter.Export?
     @State private var cameraStatus = CameraAuthorization.statusDescription
     @State private var viewport: CGSize = .zero
     @Environment(\.displayScale) private var displayScale
@@ -35,14 +37,19 @@ public struct ContentView: View {
             if phase != .active {
                 calibration = nil
                 lateralityCheck = nil
-                tracking.stop()
+                if !isRunningStudy { tracking.stop() }
             }
         }
     }
 
     @ViewBuilder
     private var content: some View {
-        if let check = lateralityCheck {
+        if isRunningStudy {
+            StudySessionView(tracking: tracking) { export in
+                isRunningStudy = false
+                if let export { lastExport = export }
+            }
+        } else if let check = lateralityCheck {
             EyeLateralityView(
                 check: check,
                 onAccept: { result in
@@ -251,14 +258,45 @@ public struct ContentView: View {
             Button {
                 Task { await toggleSession() }
             } label: {
-                Text(tracking.state == .running ? "Stop session" : "Start session")
+                Text(tracking.state == .running ? "Stop tracker" : "Start tracker")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(Instrument.paper)
+            .controlSize(.large)
+            .disabled(!FaceTrackingSupport.isSupported)
+
+            Button {
+                Task { await startStudy() }
+            } label: {
+                Text("Record a session")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(Instrument.reticle)
             .foregroundStyle(Instrument.ink)
             .controlSize(.large)
-            .disabled(!FaceTrackingSupport.isSupported)
+            .disabled(!FaceTrackingSupport.isSupported || tracking.model == nil)
+
+            if let lastExport {
+                VStack(spacing: 6) {
+                    Text("Saved \(lastExport.eventCount) events")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(Instrument.reticle)
+                    // A share sheet rather than relying on the Files app. It works on any
+                    // device, and the researcher can send a recording straight to wherever
+                    // the analysis lives instead of hunting for it in a folder.
+                    ShareLink(items: [lastExport.documentURL, lastExport.eventsURL]) {
+                        Text("Export session")
+                            .font(.caption.weight(.medium))
+                    }
+                    .tint(Instrument.reticle)
+                }
+            } else if tracking.model == nil {
+                Text("Calibrate before recording a session")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Instrument.warn)
+            }
 
             Text(cameraStatus)
                 .font(.system(size: 10))
@@ -305,6 +343,13 @@ public struct ContentView: View {
         guard await grantCamera() else { return }
         if tracking.state != .running { tracking.start() }
         lateralityCheck = EyeLateralityCheck()
+    }
+
+    private func startStudy() async {
+        guard await grantCamera() else { return }
+        if tracking.state != .running { tracking.start() }
+        lastExport = nil
+        isRunningStudy = true
     }
 
     private func startCalibration() async {

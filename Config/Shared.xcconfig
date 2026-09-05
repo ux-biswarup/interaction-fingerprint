@@ -31,6 +31,11 @@ GENERATE_INFOPLIST_FILE = YES
 INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait
 INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait
 // Camera access is required for ARKit TrueDepth face/eye tracking.
+// The researcher pulls session exports off the device with Finder or the Files app, so
+// the Documents directory has to be visible. Nothing is uploaded anywhere.
+INFOPLIST_KEY_UIFileSharingEnabled = YES
+INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES
+
 INFOPLIST_KEY_NSCameraUsageDescription = This camera access is used to study gaze and facial interaction signals for the Interaction Fingerprint research prototype.
 
 

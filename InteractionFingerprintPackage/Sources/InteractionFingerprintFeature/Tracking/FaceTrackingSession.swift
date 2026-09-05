@@ -41,6 +41,11 @@ public final class FaceTrackingSession {
     public var deviceRotationRate: Double { motion.rotationRate }
     public var deviceIsSteady: Bool { motion.isSteady }
 
+    /// Ambient light, in lumens, and its colour temperature in kelvin. Recorded as a
+    /// covariate rather than a signal.
+    public private(set) var ambientIntensity: Double = 0
+    public private(set) var ambientColourTemperature: Double = 0
+
     /// Latest raw measurements, for the calibration run to bank.
     public private(set) var latestCalibrationSample: GazeCalibrationRun.Sample?
 
@@ -104,7 +109,10 @@ public final class FaceTrackingSession {
         let configuration = ARFaceTrackingConfiguration()
         configuration.maximumNumberOfTrackedFaces = 1
         configuration.worldAlignment = .camera
-        configuration.isLightEstimationEnabled = false
+        // Ambient light is cheap to collect and explains variance that would otherwise
+        // look like a difference between participants: pupil size and tracking reliability
+        // both depend on how bright the room is.
+        configuration.isLightEstimationEnabled = true
 
         motion.start()
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
@@ -124,6 +132,11 @@ public final class FaceTrackingSession {
     private func handle(_ frame: ARFrame) {
         frameCount += 1
         updateRate(with: frame.timestamp)
+
+        if let light = frame.lightEstimate {
+            ambientIntensity = light.ambientIntensity
+            ambientColourTemperature = light.ambientColorTemperature
+        }
 
         guard
             let anchor = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first,

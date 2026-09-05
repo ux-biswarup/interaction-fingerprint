@@ -832,3 +832,230 @@ func motionIsSmoothedBeforeJudging() {
     }
     #expect(!monitor.isSteady)
 }
+
+// MARK: - Instrumentation
+
+private func makeSession() -> SessionRecord {
+    SessionRecord(
+        appID: "test", appVersion: "1",
+        device: DeviceRecord(
+            model: "iPhone", systemVersion: "26.5",
+            screenPointWidth: 393, screenPointHeight: 852, displayScale: 3
+        ),
+        calibration: nil, eyeLaterality: nil
+    )
+}
+
+private func makeGaze(x: Double?, y: Double?, at time: TimeInterval) -> FaceSample {
+    FaceSample(
+        timestamp: time, isTracked: x != nil, eyesOpen: true, quality: "good",
+        eyeX: 0, eyeY: 0, eyeZ: -0.35,
+        convergenceU: 0, convergenceV: 0, perEyeU: nil, perEyeV: nil,
+        gazeX: x, gazeY: y, isCalibrated: true,
+        signals: ["eyeBlink_L": 0.02], head: nil
+    )
+}
+
+@Test("Every event carries a gapless sequence number so lost data is detectable")
+@MainActor
+func eventSequenceIsGapless() {
+    let recorder = EventRecorder()
+    recorder.start(session: makeSession())
+    recorder.screenAppeared(.productList)
+    recorder.wentBack(from: .productDetail, productID: "sku_101")
+    recorder.productSelected("sku_101", on: .productDetail)
+    let result = recorder.stop()
+
+    let sequences = result?.events.map(\.sequence) ?? []
+    #expect(sequences == Array(1...sequences.count))
+}
+
+@Test("A session opens and closes with explicit markers")
+@MainActor
+func sessionIsBracketed() throws {
+    let recorder = EventRecorder()
+    recorder.start(session: makeSession())
+    let result = try #require(recorder.stop())
+    #expect(result.events.first?.event == EventKind.sessionStart.rawValue)
+    #expect(result.events.last?.event == EventKind.sessionEnd.rawValue)
+    #expect(result.session.endedAt != nil)
+}
+
+@Test("Gaze crossing between regions produces enter and exit events with a dwell")
+@MainActor
+func areaTransitionsProduceDwell() throws {
+    let price = AreaOfInterest(
+        screen: .productDetail, target: .price, productID: "sku_101",
+        frame: CGRect(x: 0, y: 200, width: 393, height: 100)
+    )
+    let cta = AreaOfInterest(
+        screen: .productDetail, target: .cta, productID: "sku_101",
+        frame: CGRect(x: 0, y: 600, width: 393, height: 100)
+    )
+
+    let recorder = EventRecorder()
+    recorder.start(session: makeSession())
+    // Two seconds on the price, then a look at the button.
+    recorder.recordGaze(makeGaze(x: 0.5, y: 0.3, at: 10), screen: .productDetail, area: price)
+    recorder.recordGaze(makeGaze(x: 0.5, y: 0.3, at: 12), screen: .productDetail, area: price)
+    recorder.recordGaze(makeGaze(x: 0.5, y: 0.8, at: 12.5), screen: .productDetail, area: cta)
+    let events = try #require(recorder.stop()).events
+
+    let enters = events.filter { $0.event == EventKind.areaEnter.rawValue }
+    let exits = events.filter { $0.event == EventKind.areaExit.rawValue }
+    #expect(enters.map(\.target) == ["price", "cta"])
+    // The dwell on the price is the gap between entering it and leaving it, not the gap
+    // between samples, so it must survive the sampling rate changing.
+    #expect(exits.first?.target == "price")
+    #expect(abs((exits.first?.durationMs ?? 0) - 2500) < 1)
+}
+
+@Test("Staying inside a region does not emit a transition on every frame")
+@MainActor
+func staringDoesNotSpam() throws {
+    let area = AreaOfInterest(
+        screen: .productDetail, target: .reviews, productID: "sku_101",
+        frame: CGRect(x: 0, y: 0, width: 393, height: 852)
+    )
+    let recorder = EventRecorder()
+    recorder.start(session: makeSession())
+    for step in 0..<60 {
+        recorder.recordGaze(
+            makeGaze(x: 0.5, y: 0.5, at: Double(step) / 60), screen: .productDetail, area: area
+        )
+    }
+    let events = try #require(recorder.stop()).events
+    #expect(events.filter { $0.event == EventKind.areaEnter.rawValue }.count == 1)
+}
+
+@Test("A tap records where it landed, how long it was held and how broad the contact was")
+@MainActor
+func tapCarriesTouchMetrics() throws {
+    let recorder = EventRecorder()
+    recorder.start(session: makeSession())
+    recorder.tapped(
+        screen: .productDetail, target: .cta, productID: "sku_101",
+        at: CGPoint(x: 196.5, y: 426), viewport: CGSize(width: 393, height: 852),
+        contactArea: 9.4, pressDurationMs: 118
+    )
+    let events = try #require(recorder.stop()).events
+    let tap = try #require(events.first { $0.event == EventKind.tap.rawValue })
+    #expect(abs((tap.x ?? 0) - 0.5) < 1e-9)
+    #expect(abs((tap.y ?? 0) - 0.5) < 1e-9)
+    #expect(tap.durationMs == 118)
+    #expect(tap.metrics["contactRadiusPt"] == 9.4)
+}
+
+@Test("Scrolling records velocity and counts direction reversals")
+@MainActor
+func scrollRecordsReversals() throws {
+    let recorder = EventRecorder()
+    recorder.start(session: makeSession())
+    // Down, down, then back up. The reversal is the interesting part: steady scrolling is
+    // reading, back and forth is searching.
+    for offset in [0.0, 120.0, 260.0, 140.0, 40.0] {
+        recorder.scrolled(screen: .productDetail, offset: offset, productID: "sku_101")
+        try? await_briefly()
+    }
+    let scrolls = try #require(recorder.stop()).events
+        .filter { $0.event == EventKind.scroll.rawValue }
+    #expect(scrolls.count >= 2)
+    #expect((scrolls.last?.metrics["reversals"] ?? 0) >= 1)
+}
+
+/// The recorder throttles scrolls, so a test has to let real time pass between them.
+private func await_briefly() throws {
+    Thread.sleep(forTimeInterval: EventRecorder.scrollThrottle + 0.01)
+}
+
+@Test("Gaze is attributed to whichever region is on top")
+func hitTestPrefersTheTopmostRegion() {
+    let background = AreaOfInterest(
+        screen: .productDetail, target: .description, productID: nil,
+        frame: CGRect(x: 0, y: 0, width: 393, height: 852)
+    )
+    let button = AreaOfInterest(
+        screen: .productDetail, target: .cta, productID: nil,
+        frame: CGRect(x: 40, y: 700, width: 313, height: 96)
+    )
+    let registry = AreaOfInterestRegistry(areas: [background, button])
+    let viewport = CGSize(width: 393, height: 852)
+
+    #expect(
+        registry.hitTest(normalised: CGPoint(x: 0.5, y: 0.87), viewport: viewport)?.target == .cta
+    )
+    #expect(
+        registry.hitTest(normalised: CGPoint(x: 0.5, y: 0.2), viewport: viewport)?.target == .description
+    )
+}
+
+@Test("A gaze that lands on nothing is attributed to nothing")
+func hitTestReturnsNilOutsideAnyRegion() {
+    let registry = AreaOfInterestRegistry(areas: [
+        AreaOfInterest(
+            screen: .productDetail, target: .price, productID: nil,
+            frame: CGRect(x: 0, y: 100, width: 393, height: 80)
+        )
+    ])
+    #expect(
+        registry.hitTest(normalised: CGPoint(x: 0.5, y: 0.9), viewport: CGSize(width: 393, height: 852)) == nil
+    )
+}
+
+@Test("Every field is written on every row, as null when absent")
+@MainActor
+func exportedRowsHaveAStableColumnSet() throws {
+    let recorder = EventRecorder()
+    recorder.start(session: makeSession())
+    recorder.recordGaze(makeGaze(x: nil, y: nil, at: 5), screen: nil, area: nil)
+    let events = try #require(recorder.stop()).events
+
+    let encoder = JSONEncoder()
+    let expected: Set<String> = [
+        "schemaVersion", "sequence", "timestamp", "event", "screen", "target",
+        "productID", "x", "y", "durationMs", "metrics", "eyesOpen", "quality", "signals",
+    ]
+    for event in events {
+        let object = try JSONSerialization.jsonObject(
+            with: try encoder.encode(event)
+        ) as? [String: Any]
+        #expect(Set(object?.keys ?? [:].keys) == expected)
+    }
+}
+
+@Test("A session writes a readable document and a line-per-event file")
+@MainActor
+func exportWritesBothFiles() throws {
+    let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+
+    let recorder = EventRecorder()
+    recorder.start(session: makeSession())
+    recorder.screenAppeared(.productList)
+    let result = try #require(recorder.stop())
+
+    let export = try SessionExporter.write(
+        session: result.session, events: result.events, to: folder
+    )
+    #expect(export.eventCount == result.events.count)
+
+    let document = try JSONDecoder().decode(
+        SessionExporter.Document.self, from: Data(contentsOf: export.documentURL)
+    )
+    #expect(document.events.count == result.events.count)
+    #expect(document.session.id == result.session.id)
+
+    // One line per event, which is what pandas reads with lines=True.
+    let lines = try String(contentsOf: export.eventsURL, encoding: .utf8)
+        .split(separator: "\n", omittingEmptySubsequences: true)
+    #expect(lines.count == result.events.count)
+}
+
+@Test("The clock anchor converts monotonic time to wall time without being used for order")
+func clockAnchorConverts() {
+    let anchor = SessionClock.Anchor(uptime: 1000, wallClock: Date(timeIntervalSince1970: 1_700_000_000))
+    let converted = anchor.wallClock(forUptime: 1042.5)
+    #expect(abs(converted.timeIntervalSince1970 - 1_700_000_042.5) < 1e-6)
+}
