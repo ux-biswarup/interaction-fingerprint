@@ -7,13 +7,22 @@ public enum GazeSource: String, Codable, Sendable, CaseIterable {
     case convergence
     /// Each eye's own orientation, averaged.
     case perEye
+    /// The pupil's position inside the eye opening, from Vision's landmarks, added to the
+    /// head direction. An experiment; see `PupilDetector`.
+    case pupil
 
     public var label: String {
         switch self {
         case .convergence: "convergence"
         case .perEye: "per-eye"
+        case .pupil: "pupil"
         }
     }
+
+    /// Whether the fit must show a positive gain along each axis. True for the ARKit
+    /// sources, whose sign convention is known. The pupil offset's sign depends on the
+    /// camera image and is left to the fit until it has been established from data.
+    var requiresPositiveGain: Bool { self != .pupil }
 }
 
 /// Shape of the correction.
@@ -240,6 +249,7 @@ public struct GazeCalibrationPoint: Codable, Sendable, Equatable {
     public let targetIndex: Int
     public let convergence: GazeMeasurement?
     public let perEye: GazeMeasurement?
+    public let pupil: GazeMeasurement?
     public let headYaw: Double
     public let headPitch: Double
 
@@ -249,20 +259,36 @@ public struct GazeCalibrationPoint: Codable, Sendable, Equatable {
         convergence: GazeMeasurement?,
         perEye: GazeMeasurement?,
         headYaw: Double,
-        headPitch: Double
+        headPitch: Double,
+        pupil: GazeMeasurement? = nil
     ) {
         self.target = target
         self.targetIndex = targetIndex
         self.convergence = convergence
         self.perEye = perEye
+        self.pupil = pupil
         self.headYaw = headYaw
         self.headPitch = headPitch
+    }
+
+    private enum CodingKeys: String, CodingKey { case target, targetIndex, convergence, perEye, pupil, headYaw, headPitch }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        target = try c.decode(CGPoint.self, forKey: .target)
+        targetIndex = try c.decode(Int.self, forKey: .targetIndex)
+        convergence = try c.decodeIfPresent(GazeMeasurement.self, forKey: .convergence)
+        perEye = try c.decodeIfPresent(GazeMeasurement.self, forKey: .perEye)
+        pupil = try c.decodeIfPresent(GazeMeasurement.self, forKey: .pupil)
+        headYaw = try c.decode(Double.self, forKey: .headYaw)
+        headPitch = try c.decode(Double.self, forKey: .headPitch)
     }
 
     func measurement(for source: GazeSource) -> GazeMeasurement? {
         switch source {
         case .convergence: convergence
         case .perEye: perEye
+        case .pupil: pupil
         }
     }
 }
@@ -564,7 +590,7 @@ public enum GazeModelFitter {
                         // An eye that turns right must map right. A fit whose gain along
                         // either axis comes out zero or negative has found a coincidence
                         // in the data, not the eye, and is refused whatever its score.
-                        solution.diagonalGain.u > 0, solution.diagonalGain.v > 0,
+                        !source.requiresPositiveGain || (solution.diagonalGain.u > 0 && solution.diagonalGain.v > 0),
                         let score = groupedCrossValidation(
                             points: usable, groups: groups, source: source,
                             basis: basis, geometry: geometry, ridge: ridge

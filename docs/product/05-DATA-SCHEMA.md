@@ -119,6 +119,7 @@ columns on every row.
 | `convergenceU`, `convergenceV` | `gaze` | Gaze direction ratios from ARKit's convergence point, dx/dz and dy/dz. The physical measurement behind `x`, `y`. With these and the eye position, a session can be re-mapped offline under a better calibration. |
 | `perEyeU`, `perEyeV` | `gaze` | The same from each eye's own orientation, averaged. |
 | `headYawRad`, `headPitchRad`, `headRollRad` | `gaze` | Head orientation relative to the phone, in the display frame. Note that this changes when the phone turns, not only when the head does. |
+| `pupilU`, `pupilV` | `gaze` | Pupil offset from the centre of the eye opening as a fraction of the opening's width, from Vision's face landmarks, averaged over both eyes and paired with the display axes. Null when no fresh landmarks were available. An experimental eye-in-head readout; see `11-LEARNED-EYE-MODEL.md`. |
 | `headForwardU`, `headForwardV` | `gaze` | The head's forward direction as ratios in the same units as the gaze angles. The fixed-gain term of the gaze model: corrected gaze = head + f(gaze − head). |
 | `deviceTiltRad` | `gaze` | How far the screen leans back from vertical, radians. 0 upright, π/2 flat facing up. From gravity, so it does not drift. How the phone is held is a covariate the analysis needs; a participant lying down is a different viewing geometry. |
 | `deviceRollRad` | `gaze` | Sideways lean of the phone, radians. Positive when the top leans to the participant's right. |

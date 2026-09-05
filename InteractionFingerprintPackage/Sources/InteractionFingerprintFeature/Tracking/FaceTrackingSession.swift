@@ -77,6 +77,10 @@ public final class FaceTrackingSession {
     public var arSession: ARSession { session }
     private let proxy = ARSessionProxy()
     private let motion = DeviceMotionMonitor()
+    private let pupils = PupilDetector()
+    private var pupilTask: Task<Void, Never>?
+    /// Latest pupil landmarks, usually one or two frames behind the ARKit frame.
+    public private(set) var latestPupil: PupilOffsets?
     private var gate = MotionGate()
     private var horizontalFilter = OneEuroFilter()
     private var verticalFilter = OneEuroFilter()
@@ -146,8 +150,40 @@ public final class FaceTrackingSession {
         guard state == .running else { return }
         session.pause()
         motion.stop()
+        pupilTask?.cancel()
+        pupilTask = nil
+        latestPupil = nil
         state = .idle
         displayGaze = nil
+    }
+
+    /// Hands the frame's image to Vision unless a detection is already running. Landmarks
+    /// take longer than a frame, so some frames are skipped; the result is stamped with the
+    /// frame it came from and treated as stale after a tenth of a second.
+    private func schedulePupilDetection(_ frame: ARFrame) {
+        guard pupilTask == nil else { return }
+        let box = PixelBufferBox(buffer: frame.capturedImage)
+        let timestamp = frame.timestamp
+        pupilTask = Task { [weak self] in
+            let result = await self?.pupils.detect(box, timestamp: timestamp)
+            guard let self else { return }
+            if let result { self.latestPupil = result }
+            self.pupilTask = nil
+        }
+    }
+
+    /// The pupil reading as a gaze measurement: the head direction plus the pupil offset,
+    /// from the same eye position as the ARKit estimate, so the three sources differ only
+    /// in what they say about the eye's rotation within the head.
+    private func pupilMeasurement(reference: GazeMeasurement?, head: HeadPose, at timestamp: TimeInterval) -> GazeMeasurement? {
+        guard let reference, let pupil = latestPupil, timestamp - pupil.timestamp < 0.1 else { return nil }
+        return GazeMeasurement(
+            u: head.forwardU + pupil.u, v: head.forwardV + pupil.v,
+            eyeX: reference.eyeX, eyeY: reference.eyeY, distance: reference.distance,
+            headYaw: head.yaw, headPitch: head.pitch,
+            lookU: reference.lookU, lookV: reference.lookV,
+            headU: head.forwardU, headV: head.forwardV
+        )
     }
 
     // MARK: Frame handling
@@ -174,6 +210,7 @@ public final class FaceTrackingSession {
         }
 
         trackedFrameCount += 1
+        schedulePupilDetection(frame)
 
         let signals = Self.signals(from: anchor)
         let eyesOpen = TrackedBlendShapes.eyesOpen(in: signals)
@@ -211,6 +248,7 @@ public final class FaceTrackingSession {
             )
         }
         let reference = convergenceMeasurement ?? perEyeMeasurement
+        let pupilMeasurement = pupilMeasurement(reference: reference, head: head, at: frame.timestamp)
 
         // The motion verdict is made in millimetres on the screen, which needs the viewing
         // distance measured on this very frame.
@@ -234,12 +272,14 @@ public final class FaceTrackingSession {
             convergence: convergenceMeasurement,
             perEye: perEyeMeasurement,
             headYaw: head.yaw,
-            headPitch: head.pitch
+            headPitch: head.pitch,
+            pupil: pupilMeasurement
         )
 
         let normalised = mapToScreen(
             convergence: convergenceMeasurement,
-            perEye: perEyeMeasurement
+            perEye: perEyeMeasurement,
+            pupil: pupilMeasurement
         )
 
         latest = FaceSample(
@@ -259,7 +299,9 @@ public final class FaceTrackingSession {
             isCalibrated: model != nil,
             signals: signals,
             head: head,
-            device: motion.isAvailable ? deviceAttitude : nil
+            device: motion.isAvailable ? deviceAttitude : nil,
+            pupilU: pupilMeasurement.map(\.eyeInHeadU),
+            pupilV: pupilMeasurement.map(\.eyeInHeadV)
         )
 
         // What counts as data and what should be drawn are different questions.
@@ -312,12 +354,17 @@ public final class FaceTrackingSession {
     /// position. Falls back to the uncorrected geometry when nothing has been fitted.
     private func mapToScreen(
         convergence: GazeMeasurement?,
-        perEye: GazeMeasurement?
+        perEye: GazeMeasurement?,
+        pupil: GazeMeasurement?
     ) -> CGPoint? {
         guard let geometry = screenGeometry else { return nil }
 
         if let model {
-            let measurement = model.source == .perEye ? perEye : convergence
+            let measurement: GazeMeasurement? = switch model.source {
+            case .convergence: convergence
+            case .perEye: perEye
+            case .pupil: pupil
+            }
             guard let measurement else { return nil }
             return geometry.normalised(fromCameraMetres: model.screenPlaneHit(for: measurement))
         }

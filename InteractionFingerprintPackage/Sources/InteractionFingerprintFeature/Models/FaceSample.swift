@@ -130,6 +130,11 @@ public struct FaceSample: Codable, Sendable, Equatable {
     /// How the phone was held and moved on this frame. Nil when motion data was unavailable.
     public let device: DeviceAttitude?
 
+    /// Pupil offset inside the eye opening from Vision's landmarks, as a fraction of the
+    /// opening's width, horizontal and vertical. Nil when no fresh landmarks were available.
+    public let pupilU: Double?
+    public let pupilV: Double?
+
     public init(
         timestamp: TimeInterval,
         isTracked: Bool,
@@ -142,7 +147,9 @@ public struct FaceSample: Codable, Sendable, Equatable {
         isCalibrated: Bool,
         signals: [String: Double],
         head: HeadPose?,
-        device: DeviceAttitude? = nil
+        device: DeviceAttitude? = nil,
+        pupilU: Double? = nil,
+        pupilV: Double? = nil
     ) {
         self.timestamp = timestamp
         self.isTracked = isTracked
@@ -161,6 +168,8 @@ public struct FaceSample: Codable, Sendable, Equatable {
         self.signals = signals
         self.head = head
         self.device = device
+        self.pupilU = pupilU
+        self.pupilV = pupilV
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -168,7 +177,7 @@ public struct FaceSample: Codable, Sendable, Equatable {
         case eyeX, eyeY, eyeZ
         case convergenceU, convergenceV, perEyeU, perEyeV
         case gazeX, gazeY, isCalibrated
-        case signals, head, device
+        case signals, head, device, pupilU, pupilV
     }
 
     /// Written by hand because the synthesised encoder omits nil optionals entirely.
@@ -197,6 +206,8 @@ public struct FaceSample: Codable, Sendable, Equatable {
         else { try container.encodeNil(forKey: .head) }
         if let device { try container.encode(device, forKey: .device) }
         else { try container.encodeNil(forKey: .device) }
+        try encodeOrNull(pupilU, .pupilU, into: &container)
+        try encodeOrNull(pupilV, .pupilV, into: &container)
     }
 
     private func encodeOrNull(

@@ -124,6 +124,8 @@ public final class GazeCalibrationRun {
     public struct Sample: Sendable, Equatable {
         public let convergence: GazeMeasurement?
         public let perEye: GazeMeasurement?
+        /// Pupil-landmark gaze, when Vision found the face on this frame.
+        public let pupil: GazeMeasurement?
         public let headYaw: Double
         public let headPitch: Double
 
@@ -131,10 +133,12 @@ public final class GazeCalibrationRun {
             convergence: GazeMeasurement?,
             perEye: GazeMeasurement?,
             headYaw: Double,
-            headPitch: Double
+            headPitch: Double,
+            pupil: GazeMeasurement? = nil
         ) {
             self.convergence = convergence
             self.perEye = perEye
+            self.pupil = pupil
             self.headYaw = headYaw
             self.headPitch = headPitch
         }
@@ -327,7 +331,9 @@ public final class GazeCalibrationRun {
                     convergence: c,
                     perEye: p,
                     headYaw: sample.headYaw,
-                    headPitch: sample.headPitch
+                    headPitch: sample.headPitch,
+                    // The pupil reading rides on the frames the ARKit fixation gate kept.
+                    pupil: sample.pupil
                 )
             )
         }

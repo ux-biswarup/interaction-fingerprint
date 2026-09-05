@@ -552,6 +552,15 @@ conditions the study actually needs, the eye component is too weak to carry gaze
 level of page regions. The options, with their costs, are set out in the closing summary of
 this document's companion discussion and in `07-ROADMAP.md`.
 
+## 15. Next: the eye-in-head term, from pupil landmarks and then a learned model
+
+Natural hand-held use is the premise of the research, so constraining the conditions is
+ruled out. The plan is in `11-LEARNED-EYE-MODEL.md`: first, the pupil's position inside the
+eye opening from Vision's face landmarks, now recorded on every frame and offered to the
+fitter as a third gaze source, measured with the same gain table as §14; then, if that is
+not enough, a small convolutional model for the eye-in-head angle with everything else in
+this document kept as it is.
+
 ## 13. What this does not claim
 
 It does not claim the gyroscope makes gaze more accurate. It cannot; it never sees the eye.

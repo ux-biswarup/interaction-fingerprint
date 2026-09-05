@@ -40,7 +40,9 @@ ones: ARKit's camera axes were rotated relative to the geometry, and the eye sig
 at a fifth of its true size on top of a full-strength head direction. The model is now
 head plus corrected eye-in-head on corrected axes, and gaze-before-tap error in free viewing
 is the figure that judges it; see `10-MOTION-FUSION.md` sections 9, 11 and 12. **Sensing
-accuracy in free viewing is currently 4° to 6° and is the open problem of Phase 1.**
+accuracy in free viewing is currently 4° to 6° and is the open problem of Phase 1.** Natural
+hand-held use is the premise and stays; the fix is a better eye-in-head estimate, planned in
+`11-LEARNED-EYE-MODEL.md` as Phase 1b: pupil landmarks first, a learned eye model if needed.
 
 ## Phase 3 — Fingerprint
 Normalize events, derive features, summarize sessions, visualize fingerprints.

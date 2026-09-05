@@ -846,6 +846,47 @@ func eyeLookShapesAreNotModelInputs() {
     #expect(TrackedBlendShapes.keys.contains("eyeLookUp_L"))
 }
 
+@Test("The pupil offset is measured from the centre of the eye opening in units of its width")
+func pupilOffsetIsNormalisedByEyeWidth() throws {
+    // An eye opening 40 px wide and 16 px tall, pupil 6 px right of centre and 2 px up.
+    let contour = [CGPoint(x: 100, y: 200), CGPoint(x: 120, y: 208), CGPoint(x: 140, y: 200), CGPoint(x: 120, y: 192)]
+    let offset = try #require(PupilGeometry.offset(pupil: CGPoint(x: 126, y: 202), contour: contour))
+    #expect(abs(offset.x - 0.15) < 1e-9)
+    #expect(abs(offset.y - 0.05) < 1e-9)
+    // Too few points, or a degenerate opening, is no reading rather than a wild one.
+    #expect(PupilGeometry.offset(pupil: .zero, contour: [CGPoint(x: 1, y: 1), CGPoint(x: 2, y: 2)]) == nil)
+    #expect(PupilGeometry.offset(pupil: .zero, contour: Array(repeating: CGPoint(x: 5, y: 5), count: 6)) == nil)
+}
+
+@Test("Landmark image axes are paired with the display according to how the buffer was turned")
+func pupilAxesArePairedWithTheDisplay() {
+    // Buffer turned a quarter: the upright image's x already runs across the screen.
+    let turned = PupilGeometry.displayPaired(x: 0.1, y: 0.02, quarterTurned: true)
+    #expect(turned.u == 0.1 && turned.v == 0.02)
+    // Not turned: the buffer's long axis is the phone's long axis, so x runs up the screen.
+    let flat = PupilGeometry.displayPaired(x: 0.1, y: 0.02, quarterTurned: false)
+    #expect(flat.u == 0.02 && flat.v == -0.1)
+    #expect(PupilGeometry.isQuarterTurn(.right) && PupilGeometry.isQuarterTurn(.leftMirrored))
+    #expect(!PupilGeometry.isQuarterTurn(.up) && !PupilGeometry.isQuarterTurn(.downMirrored))
+}
+
+@Test("The pupil source is offered only when it was captured, and rides on the fixation-gated frames")
+func pupilSourceFollowsTheFixationGate() throws {
+    let observer = SyntheticObserver()
+    let m = observer.measurement(lookingAt: GazeCalibrationRun.targets[0], from: 0.35)
+    let pupil = GazeMeasurement(u: 0.3, v: 0.1, eyeX: m.eyeX, eyeY: m.eyeY, distance: 0.35, headU: 0.03, headV: -0.05)
+    let samples = (0..<12).map { _ in
+        GazeCalibrationRun.Sample(convergence: m, perEye: m, headYaw: 0, headPitch: 0, pupil: pupil)
+    }
+    let points = GazeCalibrationRun.reduce(samples: samples, target: GazeCalibrationRun.targets[0], targetIndex: 0)
+    #expect(points.count == 12)
+    #expect(points.allSatisfy { $0.pupil == pupil })
+    #expect(points[0].measurement(for: .pupil) == pupil)
+    // Without pupil readings the source contributes nothing and the fit proceeds on the rest.
+    let model = try #require(GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry))
+    #expect(model.source != .pupil)
+}
+
 @Test("Camera axes are rotated into the display frame: display X is camera y, display Y is minus camera x")
 func displayFrameRotation() {
     // A point 10 cm along the camera's y axis, 30 cm in front: to the participant's right.
