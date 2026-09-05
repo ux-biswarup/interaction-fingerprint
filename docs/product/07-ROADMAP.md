@@ -41,8 +41,12 @@ at a fifth of its true size on top of a full-strength head direction. The model 
 head plus corrected eye-in-head on corrected axes, and gaze-before-tap error in free viewing
 is the figure that judges it; see `10-MOTION-FUSION.md` sections 9, 11 and 12. **Sensing
 accuracy in free viewing is currently 4° to 6° and is the open problem of Phase 1.** Natural
-hand-held use is the premise and stays; the fix is a better eye-in-head estimate, planned in
-`11-LEARNED-EYE-MODEL.md` as Phase 1b: pupil landmarks first, a learned eye model if needed.
+hand-held use is the premise and stays; the fix is a better eye-in-head estimate, Phase 1b in
+`11-LEARNED-EYE-MODEL.md`. Status, 6 September 2026: pupil landmarks tried and kept as the
+shipped source (199 pt against taps, best so far, not enough); a learned eye model trained on
+MPIIFaceGaze reaches correlation 0.97 and gain 0.96 horizontally on a person it never saw,
+against ARKit's gain of 0.2, and now runs on the phone as a fourth gaze source awaiting its
+first calibration.
 
 ## Phase 3 — Fingerprint
 Normalize events, derive features, summarize sessions, visualize fingerprints.
