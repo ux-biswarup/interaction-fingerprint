@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Train the eye-in-head network on GazeCapture.
+"""Train the eye-in-head network.
 
-    python3 -m eyemodel.train --root /path/to/GazeCapture --epochs 5 --limit 50
+    python3 -m eyemodel.train --root ~/Datasets/MPIIFaceGaze/MPIIFaceGaze --epochs 10
+    python3 -m eyemodel.train --dataset gazecapture --root /path/to/GazeCapture --limit 50
 
-Subjects, not frames, are held out: the dataset's own train/val/test split is by person,
-and a network that has seen a person's eyes in training says nothing about a new one.
-Reports held-out error in degrees, which is what the calibration on device will receive.
+Subjects, not frames, are held out: a network that has seen a person's eyes in training
+says nothing about a new one. Reports held-out error in degrees, which is what the
+calibration on device will receive.
 """
 from __future__ import annotations
 
@@ -20,7 +21,8 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eyemodel import gazecapture as gc  # noqa: E402
-from eyemodel.dataset import GazeCaptureEyes  # noqa: E402
+from eyemodel import mpiifacegaze as mf  # noqa: E402
+from eyemodel.dataset import FaceGazeEyes, GazeCaptureEyes  # noqa: E402
 from eyemodel.model import EyeInHeadNet, parameter_count  # noqa: E402
 
 
@@ -61,25 +63,35 @@ def run_epoch(model, loader, optimiser, dev, train: bool) -> tuple[float, float]
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", required=True, help="GazeCapture root with numbered subject folders")
+    ap.add_argument("--root", required=True, help="dataset root")
+    ap.add_argument("--dataset", choices=("mpiifacegaze", "gazecapture"), default="mpiifacegaze")
+    ap.add_argument("--holdout", default="p14", help="MPIIFaceGaze: comma-separated subjects to hold out")
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--limit", type=int, default=None, help="subjects to read, for a quick run")
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--out", default="eyemodel.pt")
     args = ap.parse_args()
 
-    frames = gc.read_dataset(args.root, limit=args.limit)
-    train = [f for f in frames if f.split == "train"]
-    val = [f for f in frames if f.split in ("val", "test")]
+    if args.dataset == "gazecapture":
+        frames = gc.read_dataset(args.root, limit=args.limit)
+        train = [f for f in frames if f.split == "train"]
+        val = [f for f in frames if f.split in ("val", "test")]
+        make, aux = GazeCaptureEyes, 4
+    else:
+        frames = mf.read_dataset(args.root, limit=args.limit)
+        held = set(args.holdout.split(","))
+        train = [f for f in frames if f.subject not in held]
+        val = [f for f in frames if f.subject in held]
+        make, aux = FaceGazeEyes, FaceGazeEyes.AUX_FEATURES
     print(f"frames: {len(frames)}  train {len(train)}  held-out {len(val)}  subjects {len({f.subject for f in frames})}")
 
     dev = device()
-    model = EyeInHeadNet(aux_features=4).to(dev)
+    model = EyeInHeadNet(aux_features=aux).to(dev)
     print(f"device {dev}, parameters {parameter_count(model):,}")
     optimiser = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
     loaders = {
-        "train": DataLoader(GazeCaptureEyes(train), batch_size=args.batch, shuffle=True, num_workers=4),
-        "val": DataLoader(GazeCaptureEyes(val), batch_size=args.batch, num_workers=4),
+        "train": DataLoader(make(train), batch_size=args.batch, shuffle=True, num_workers=4),
+        "val": DataLoader(make(val), batch_size=args.batch, num_workers=4),
     }
     for epoch in range(args.epochs):
         tl, td = run_epoch(model, loaders["train"], optimiser, dev, train=True)

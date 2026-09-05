@@ -116,6 +116,24 @@ once, offline. If that estimate is too coarse, the fallback is the published app
 the network end to end on the screen point and treat its output as one more gaze source for
 the calibration to correct, which keeps everything else in this plan intact.
 
+## 2d. Which dataset, decided 6 September 2026
+
+GazeCapture is requested by form and takes time. The alternatives were checked directly,
+by fetching their pages and probing their download links, not from memory:
+
+| Dataset | Access | Size | What it labels | Verdict |
+| --- | --- | --- | --- | --- |
+| **MPIIFaceGaze** (MPI-INF) | **Direct download, no form**, CC BY-NC-SA 4.0, cite Zhang et al. CVPRW 2017 | 940 MB, 15 people, ~45k frames | 2D and **3D gaze target, 6D head pose**, face centre, six landmarks, camera intrinsics, screen pose | **Primary.** The only one whose labels give the eye-in-head angle directly, which is exactly this project's model structure. Laptop webcams, not phones. |
+| MPIIGaze (same group) | Direct, 2.1 GB | 15 people, 213k eye patches | Normalised eye images with gaze and head angles | Second, once the pipeline runs. |
+| TabletGaze (Rice) | Direct link on the project page | 51 people, 816 videos, tablet front camera, four postures | 35 screen points; no head pose, no face boxes | Domain check later: closest to hand-held use, but every label this model needs would have to be estimated first. |
+| GazeCapture (MIT) | Request form, research licence | 1,474 people, 2.5M frames, phones | Screen points, face and eye boxes; no head pose | Still worth requesting for scale and the phone domain. |
+| Hugging Face hub | Searched the hub API for "gaze" | | One unofficial Gaze360 mirror; the rest unrelated | Not used. Re-hosted copies of licensed datasets carry a licence risk this research should not take. |
+| Kaggle | Searched | | No smartphone gaze dataset with the labels needed | Not used. |
+
+MPIIFaceGaze was downloaded to a folder outside the repository the same day. Its reader
+(`Analysis/eyemodel/mpiifacegaze.py`) derives the label from the face centre, the 3D target
+and the head rotation, and the training entry point holds out participants by name.
+
 ## 3. Milestones
 
 1. **Pupil landmark result.** Done, §2c above. 2b starts.

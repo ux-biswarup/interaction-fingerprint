@@ -27,7 +27,13 @@ def frame_label(frame: gc.Frame) -> np.ndarray:
     return np.array([u, v], dtype=np.float32)
 
 
+def _to_tensor(a: np.ndarray) -> torch.Tensor:
+    return torch.from_numpy(a.astype(np.float32) / 255.0).unsqueeze(0)
+
+
 class GazeCaptureEyes(Dataset):
+    """GazeCapture frames. Label: gaze ratios from a nominal eye position; aux: face box."""
+
     def __init__(self, frames: list[gc.Frame], crop: int = CROP):
         self.frames = frames
         self.crop = crop
@@ -39,11 +45,34 @@ class GazeCaptureEyes(Dataset):
         frame = self.frames[i]
         with Image.open(frame.path) as im:
             grey = np.asarray(im.convert("L"))
-        left = gc.crop(grey, frame.left_eye, self.crop)
-        right = gc.crop(grey, frame.right_eye, self.crop)
-        to_tensor = lambda a: torch.from_numpy(a.astype(np.float32) / 255.0).unsqueeze(0)  # noqa: E731
         return (
-            to_tensor(left), to_tensor(right),
+            _to_tensor(gc.crop(grey, frame.left_eye, self.crop)),
+            _to_tensor(gc.crop(grey, frame.right_eye, self.crop)),
             torch.from_numpy(frame_aux(frame, (grey.shape[1], grey.shape[0]))),
             torch.from_numpy(frame_label(frame)),
+        )
+
+
+class FaceGazeEyes(Dataset):
+    """MPIIFaceGaze frames. Label: the eyes' rotation within the head, exactly the quantity
+    the device needs; aux: the head's forward direction, exactly what ARKit supplies."""
+
+    AUX_FEATURES = 2
+
+    def __init__(self, frames, crop: int = CROP):
+        self.frames = frames
+        self.crop = crop
+
+    def __len__(self) -> int:
+        return len(self.frames)
+
+    def __getitem__(self, i: int):
+        frame = self.frames[i]
+        with Image.open(frame.path) as im:
+            grey = np.asarray(im.convert("L"))
+        return (
+            _to_tensor(gc.crop(grey, frame.left_eye, self.crop)),
+            _to_tensor(gc.crop(grey, frame.right_eye, self.crop)),
+            torch.tensor(frame.head_ratios, dtype=torch.float32),
+            torch.tensor(frame.eye_in_head, dtype=torch.float32),
         )
