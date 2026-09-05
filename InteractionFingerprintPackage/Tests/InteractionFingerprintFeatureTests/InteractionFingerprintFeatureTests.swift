@@ -782,3 +782,53 @@ func generalisationGapIsReported() throws {
     // A noiseless observer is modelled exactly, so there is nothing left to generalise.
     #expect(model.generalisationGapPoints < 3)
 }
+
+
+// MARK: - Device motion gating
+
+@Test("Ordinary hand tremor does not count as the phone being moved")
+func handTremorIsNotMotion() {
+    // A hand at rest still rotates a few tenths of a radian per second. A gate that fires
+    // on that discards frames dozens of times a second and makes the dot lurch.
+    #expect(DeviceMotionMonitor.updatedSteadiness(wasSteady: true, rotation: 0.25, acceleration: 0.08))
+    #expect(DeviceMotionMonitor.updatedSteadiness(wasSteady: true, rotation: 0.6, acceleration: 0.2))
+}
+
+@Test("A deliberate reposition does count")
+func repositionIsMotion() {
+    #expect(!DeviceMotionMonitor.updatedSteadiness(wasSteady: true, rotation: 2.0, acceleration: 0.1))
+    #expect(!DeviceMotionMonitor.updatedSteadiness(wasSteady: true, rotation: 0.1, acceleration: 0.9))
+}
+
+@Test("The verdict does not flicker in the band between the two thresholds")
+func steadinessHasHysteresis() {
+    // Sitting between the thresholds, the previous verdict stands. Without this the gate
+    // chatters, and every flip is a discarded frame and a visible jump.
+    let between = 1.2
+    #expect(DeviceMotionMonitor.updatedSteadiness(wasSteady: true, rotation: between, acceleration: 0))
+    #expect(!DeviceMotionMonitor.updatedSteadiness(wasSteady: false, rotation: between, acceleration: 0))
+}
+
+@MainActor
+@Test("A single jolt does not trip the gate, sustained movement does")
+func motionIsSmoothedBeforeJudging() {
+    let monitor = DeviceMotionMonitor()
+    var t = 0.0
+    for _ in 0..<30 {
+        monitor.ingest(rotation: 0.1, acceleration: 0.05, timestamp: t)
+        t += 1.0 / 60.0
+    }
+    #expect(monitor.isSteady)
+
+    // One wild frame, the kind a knuckle knock produces.
+    monitor.ingest(rotation: 6.0, acceleration: 2.0, timestamp: t)
+    t += 1.0 / 60.0
+    #expect(monitor.isSteady)
+
+    // Sustained movement gets through.
+    for _ in 0..<30 {
+        monitor.ingest(rotation: 3.0, acceleration: 1.0, timestamp: t)
+        t += 1.0 / 60.0
+    }
+    #expect(!monitor.isSteady)
+}

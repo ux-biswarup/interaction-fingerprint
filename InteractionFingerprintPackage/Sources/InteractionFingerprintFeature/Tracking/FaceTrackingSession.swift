@@ -204,13 +204,30 @@ public final class FaceTrackingSession {
             head: head
         )
 
-        // A blink would otherwise drag the drawn dot across the screen and back.
-        guard quality.isUsable, let normalised else { return }
+        // What counts as data and what should be drawn are different questions.
+        //
+        // During a blink the estimate is meaningless and would fling the dot across the
+        // screen, so drawing stops. While the phone is being moved the estimate is merely
+        // less reliable, and freezing the dot only to have it jump when the gate reopens
+        // looks far worse than letting it drift. So it keeps moving, smoothed harder and
+        // dimmed, while the sample is still marked unusable for analysis.
+        guard shouldDraw(quality), let normalised else { return }
+
+        let heavy = !motion.isSteady
+        horizontalFilter.minCutoff = heavy ? 0.4 : 1.0
+        verticalFilter.minCutoff = heavy ? 0.4 : 1.0
 
         displayGaze = CGPoint(
             x: horizontalFilter.filter(Double(normalised.x), timestamp: frame.timestamp),
             y: verticalFilter.filter(Double(normalised.y), timestamp: frame.timestamp)
         )
+    }
+
+    private func shouldDraw(_ quality: GazeQuality) -> Bool {
+        switch quality {
+        case .noFace, .blinking: false
+        default: true
+        }
     }
 
     private func untrackedSample(at timestamp: TimeInterval) -> FaceSample {
