@@ -1,0 +1,16 @@
+// Local.xcconfig.example
+//
+// Copy to Config/Local.xcconfig and fill in your own values, then build.
+// Config/Local.xcconfig is git-ignored so personal signing settings stay out of the repo.
+//
+//   cp Config/Local.xcconfig.example Config/Local.xcconfig
+//
+// Find your team ID in Xcode → Settings → Accounts, or with:
+//   defaults read com.apple.dt.Xcode IDEProvisioningTeams
+
+// Your Apple Developer team ID (10 characters). A free Apple ID personal team works.
+DEVELOPMENT_TEAM =
+
+// Bundle IDs must be globally unique. If the default is taken, or you are using a
+// free personal team, override it here with your own reverse-DNS prefix.
+// PRODUCT_BUNDLE_IDENTIFIER = com.yourname.InteractionFingerprint
