@@ -137,3 +137,9 @@ that has a good figure.
 Two per session, in the app's Documents directory and shareable from the app.
 `session_<uuid>.json` holds the session record and every event. `session_<uuid>.jsonl`
 holds one event per line, which pandas reads with `lines=True`.
+
+One per accepted calibration, `calibration_<unix seconds>.json`: the chosen model, the
+number of targets that failed the fixation check, and every frame the fit used, each with
+its target, target index, both gaze measurements (angles, eye position, distance, head
+pose, folded eye-direction shapes). The accuracy figure says how good a calibration is;
+these points say where it is weak. The most recent one is shared along with a session.

@@ -121,7 +121,7 @@ public struct GazeBasis: Codable, Sendable, Equatable, Hashable {
 }
 
 /// One measured gaze direction, with the eye position it was measured from.
-public struct GazeMeasurement: Sendable, Equatable {
+public struct GazeMeasurement: Codable, Sendable, Equatable {
     public let u: Double
     public let v: Double
     public let eyeX: Double
@@ -174,7 +174,7 @@ public struct GazeMeasurement: Sendable, Equatable {
 }
 
 /// What was captured while one calibration target was on screen.
-public struct GazeCalibrationPoint: Sendable, Equatable {
+public struct GazeCalibrationPoint: Codable, Sendable, Equatable {
     public let target: CGPoint
     /// Which position in the target grid this is. Both viewing distances visit the same
     /// grid, so this groups the two visits together for cross-validation.

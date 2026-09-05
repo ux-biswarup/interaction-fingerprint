@@ -211,7 +211,8 @@ public final class FaceTrackingSession {
             isTracked: true,
             eyesOpen: eyesOpen,
             distance: reference?.distance,
-            headRotation: head.offAxisRotation,
+            headYaw: head.yaw,
+            headPitch: head.pitch,
             deviceIsSteady: gate.isSteady,
             model: model
         )

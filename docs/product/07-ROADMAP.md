@@ -32,8 +32,9 @@ as JSON and newline-delimited JSON.
 First real recording on 5 September 2026: 1,739 events, gapless, 59.9 Hz, 95% of frames
 in the trusted envelope. It exposed two defects, both now fixed and covered by tests: the
 calibration extrapolated its head-pose and quadratic terms and sent half of the gaze off
-the screen, and taps were not recorded at all. See `10-MOTION-FUSION.md` sections 9 and
-10. The gate is a second recording that shows taps and on-screen gaze.
+the screen, and taps were not recorded at all. See `10-MOTION-FUSION.md` section 9.
+Second recording, same day: 20 taps all attributed, 72% of gaze on the display, dwells up
+to 1.5 s. **Gate passed.**
 
 ## Phase 3 — Fingerprint
 Normalize events, derive features, summarize sessions, visualize fingerprints.

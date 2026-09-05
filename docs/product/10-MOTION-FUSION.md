@@ -306,6 +306,32 @@ and treats a cancellation as the end of the touch it was. A UI test presses real
 through a real window and checks the exported file, because a unit test of the recorder
 could never have found this.
 
+### The second recording
+
+Recorded after recalibrating on the build with the fixes above. Same task, 55 seconds.
+
+| | First | Second |
+| --- | --- | --- |
+| Gaze samples on the display | 48% | 72% |
+| Median per-frame jump | 17.9 pt | 8.5 pt |
+| Jump while the phone turned at 0.2 to 0.4 rad/s | 81 pt | 22 pt |
+| Taps recorded | 0 | 20, every one attributed to its control |
+| Longest dwell on a region | 0.1 s | 1.5 s on the product image |
+
+The sensitivity to phone movement fell by a factor of four with no change to the motion
+code, which settles where it came from. The Phase 2 gate is passed: taps, scrolls, screens,
+regions and gaze in one gapless stream on one clock.
+
+The remaining misses are all on the detail page and cluster just beyond the top-left
+corner, where the back button sits and where every calibration so far has had its worst
+target. That is a calibration weakness in the row nearest the camera, not a motion effect,
+and it is the next accuracy question. To make it answerable, every accepted calibration now
+writes its raw frames to disk beside the sessions.
+
+Two further adjustments from the data: the head-turned envelope now has a separate pitch
+limit of 0.60 rad, because 5% of frames were flagged at a pitch of 20° with no yaw, which is
+simply a person looking down at a phone; and drags are no longer reported as taps.
+
 ## 10. Calibration in a product
 
 The question was raised whether calibration can be skipped: a shipping product cannot ask

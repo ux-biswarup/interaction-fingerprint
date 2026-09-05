@@ -388,12 +388,44 @@ func modelSurvivesStorage() throws {
 
 @Test("The envelope names the specific reason a frame cannot be trusted")
 func qualityEnvelopeReportsReasons() {
-    #expect(GazeQuality.evaluate(isTracked: false, eyesOpen: true, distance: 0.35, headRotation: 0, model: nil) == .noFace)
-    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: false, distance: 0.35, headRotation: 0, model: nil) == .blinking)
-    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.15, headRotation: 0, model: nil) == .tooClose(0.15))
-    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.90, headRotation: 0, model: nil) == .tooFar(0.90))
-    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.35, headRotation: 0.8, model: nil) == .headTurned(0.8))
-    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.35, headRotation: 0, model: nil) == .notCalibrated)
+    #expect(GazeQuality.evaluate(isTracked: false, eyesOpen: true, distance: 0.35, headYaw: 0, headPitch: 0, model: nil) == .noFace)
+    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: false, distance: 0.35, headYaw: 0, headPitch: 0, model: nil) == .blinking)
+    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.15, headYaw: 0, headPitch: 0, model: nil) == .tooClose(0.15))
+    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.90, headYaw: 0, headPitch: 0, model: nil) == .tooFar(0.90))
+    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.35, headYaw: 0.8, headPitch: 0, model: nil) == .headTurned(0.8))
+    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.35, headYaw: 0, headPitch: 0, model: nil) == .notCalibrated)
+}
+
+@Test("Pitch has more room than yaw, because looking down at a phone is the ordinary posture")
+func pitchLimitIsLooserThanYaw() {
+    // 20° of pitch with no yaw is a person reading a phone held below eye level.
+    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.35, headYaw: 0.02, headPitch: -0.36, model: nil) == .notCalibrated)
+    // 20° of yaw is a face turned away from the camera.
+    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.35, headYaw: 0.36, headPitch: 0, model: nil) != .notCalibrated)
+    // Far enough down and pitch does count.
+    if case .headTurned = GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.35, headYaw: 0, headPitch: -0.7, model: nil) {} else {
+        Issue.record("steep pitch should be flagged")
+    }
+}
+
+@Test("A calibration's frames are written to disk and read back whole")
+func calibrationExportRoundTrips() throws {
+    let observer = SyntheticObserver()
+    let points = observer.calibration(framesPerTarget: 3)
+    let model = GazeModelFitter.best(points: points, geometry: observer.geometry)
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+    let url = try SessionExporter.writeCalibration(model: model, points: points, failedTargets: 1, to: folder)
+    #expect(url.lastPathComponent.hasPrefix("calibration_"))
+    #expect(SessionExporter.latestCalibration(in: folder) == url)
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .secondsSince1970
+    let document = try decoder.decode(SessionExporter.CalibrationDocument.self, from: Data(contentsOf: url))
+    #expect(document.points == points)
+    #expect(document.failedTargets == 1)
+    #expect(document.model?.uCoefficients == model?.uCoefficients)
 }
 
 @Test("A phone in motion is reported before any geometry test, because the geometry is stale")
@@ -403,7 +435,7 @@ func qualityFlagsDeviceMotionFirst() {
     #expect(
         GazeQuality.evaluate(
             isTracked: true, eyesOpen: true, distance: 0.90,
-            headRotation: 0, deviceIsSteady: false, model: nil
+            headYaw: 0, headPitch: 0, deviceIsSteady: false, model: nil
         ) == .deviceMoving
     )
     #expect(!GazeQuality.deviceMoving.isUsable)
@@ -415,9 +447,9 @@ func qualityEnvelopeChecksCalibratedRange() throws {
     let model = try #require(
         GazeModelFitter.best(points: observer.calibration(near: 0.32, far: 0.40), geometry: observer.geometry)
     )
-    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.36, headRotation: 0, model: model) == .good)
+    #expect(GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.36, headYaw: 0, headPitch: 0, model: model) == .good)
     #expect(
-        GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.60, headRotation: 0, model: model)
+        GazeQuality.evaluate(isTracked: true, eyesOpen: true, distance: 0.60, headYaw: 0, headPitch: 0, model: model)
             == .outsideCalibratedRange(0.60)
     )
 }

@@ -69,6 +69,49 @@ public enum SessionExporter {
         return Export(documentURL: documentURL, eventsURL: eventsURL, eventCount: events.count)
     }
 
+    /// Everything a calibration produced: the chosen model and every frame it was fitted on.
+    public struct CalibrationDocument: Codable, Sendable {
+        public let createdAt: Date
+        public let model: GazeModel?
+        public let failedTargets: Int
+        public let points: [GazeCalibrationPoint]
+    }
+
+    /// Writes a calibration's raw frames beside the sessions.
+    ///
+    /// The accuracy figure says how good a calibration is; only the points say *where* it
+    /// is bad. Three calibrations in a row put their worst target in the top row, next to
+    /// the camera, and that could not be investigated because the frames were thrown away
+    /// the moment the model was accepted.
+    @discardableResult
+    public static func writeCalibration(
+        model: GazeModel?,
+        points: [GazeCalibrationPoint],
+        failedTargets: Int,
+        to folder: URL? = nil,
+        at date: Date = Date()
+    ) throws -> URL {
+        let folder = try folder ?? directory()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .secondsSince1970
+        let url = folder.appendingPathComponent("calibration_\(Int(date.timeIntervalSince1970)).json")
+        try encoder.encode(
+            CalibrationDocument(createdAt: date, model: model, failedTargets: failedTargets, points: points)
+        ).write(to: url)
+        return url
+    }
+
+    /// The most recent calibration file, if one has been written.
+    public static func latestCalibration(in folder: URL? = nil) -> URL? {
+        guard let folder = try? folder ?? directory(),
+              let contents = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        else { return nil }
+        return contents
+            .filter { $0.lastPathComponent.hasPrefix("calibration_") }
+            .max { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
     /// Sessions already on disk, newest first.
     public static func existing() -> [URL] {
         guard let folder = try? directory(),

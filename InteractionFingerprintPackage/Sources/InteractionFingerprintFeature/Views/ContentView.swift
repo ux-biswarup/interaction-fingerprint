@@ -106,6 +106,13 @@ public struct ContentView: View {
                 onAccept: { model in
                     tracking.model = model
                     GazeModelStore.save(model)
+                    if case .finished(let result) = run.phase {
+                        // Kept for offline analysis of where the fit is weak. Failure to
+                        // write it must not block accepting a working calibration.
+                        _ = try? SessionExporter.writeCalibration(
+                            model: model, points: result.points, failedTargets: result.failedTargets
+                        )
+                    }
                     calibration = nil
                 },
                 onRetry: { run.cancel() }
@@ -340,7 +347,8 @@ public struct ContentView: View {
                     // A share sheet rather than relying on the Files app. It works on any
                     // device, and the researcher can send a recording straight to wherever
                     // the analysis lives instead of hunting for it in a folder.
-                    ShareLink(items: [lastExport.documentURL, lastExport.eventsURL]) {
+                    ShareLink(items: [lastExport.documentURL, lastExport.eventsURL]
+                        + (SessionExporter.latestCalibration().map { [$0] } ?? [])) {
                         Text("Export session")
                             .font(.caption.weight(.medium))
                     }

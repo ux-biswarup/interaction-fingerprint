@@ -21,8 +21,13 @@ public enum GazeQuality: Equatable, Sendable {
     /// Comfortable working range for a hand-held phone, in metres.
     public static let nearLimit = 0.22
     public static let farLimit = 0.65
-    /// Beyond this head rotation the eye model degrades sharply, in radians. About 20°.
-    public static let maximumHeadRotation = 0.35
+    /// Beyond this head yaw the eye model degrades sharply, in radians. About 20°.
+    public static let maximumHeadYaw = 0.35
+    /// Pitch gets more room, about 34°. Looking down at a phone held below eye level is the
+    /// ordinary posture, and the second recording flagged 5% of frames at a pitch of 20°
+    /// with the yaw near zero. The camera sees a face from below in nearly every use of
+    /// this device and ARKit is built for it.
+    public static let maximumHeadPitch = 0.60
 
     /// True when a sample from this frame belongs in an analysis.
     public var isUsable: Bool {
@@ -53,7 +58,8 @@ public enum GazeQuality: Equatable, Sendable {
         isTracked: Bool,
         eyesOpen: Bool,
         distance: Double?,
-        headRotation: Double?,
+        headYaw: Double?,
+        headPitch: Double?,
         deviceIsSteady: Bool = true,
         model: GazeModel?
     ) -> GazeQuality {
@@ -65,7 +71,10 @@ public enum GazeQuality: Equatable, Sendable {
         if !deviceIsSteady { return .deviceMoving }
         if distance < nearLimit { return .tooClose(distance) }
         if distance > farLimit { return .tooFar(distance) }
-        if let headRotation, headRotation > maximumHeadRotation { return .headTurned(headRotation) }
+        if let headYaw, let headPitch,
+           abs(headYaw) > maximumHeadYaw || abs(headPitch) > maximumHeadPitch {
+            return .headTurned((headYaw * headYaw + headPitch * headPitch).squareRoot())
+        }
         guard let model else { return .notCalibrated }
 
         // A little slack around the calibrated band: the fit degrades gradually rather
