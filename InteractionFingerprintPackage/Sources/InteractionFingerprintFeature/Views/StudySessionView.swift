@@ -30,7 +30,7 @@ public struct StudySessionView: View {
 
     public var body: some View {
         GeometryReader { proxy in
-            ZStack(alignment: .top) {
+            ZStack(alignment: .topTrailing) {
                 ShopView(recorder: recorder)
                     .coordinateSpace(.named(InstrumentationSpace.root))
                     .onPreferenceChange(AreaOfInterestKey.self) { areas in
@@ -76,28 +76,37 @@ public struct StudySessionView: View {
 
     /// Sits over the stimulus rather than inside it, so the shop's own layout is exactly
     /// what a participant would see without any recording apparatus attached.
+    ///
+    /// Placed in the top right of the shop's own header row, below the sensor housing. The
+    /// root view ignores safe areas because gaze has to be mapped against the whole display,
+    /// so the inset is read back from the window; without it this sat under the Dynamic
+    /// Island and the Finish button could not be pressed.
+    ///
+    /// It shows the researcher a count and a colour, and deliberately no words about
+    /// tracking state. A participant reading "hold the phone still" mid-task is a confound.
     private var banner: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 10) {
             Circle()
                 .fill(tracking.quality.isConfident ? Color.green : Color.orange)
                 .frame(width: 7, height: 7)
-            Text(tracking.quality.isConfident ? "Recording" : tracking.quality.guidance)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Shop.ink)
+                .accessibilityLabel(tracking.quality.isConfident ? "Tracking" : tracking.quality.guidance)
             Text("\(recorder.eventCount)")
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(Shop.inkSecondary)
+                .monospacedDigit()
             Divider().frame(height: 14)
             Button("Finish") { finish() }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Shop.action)
+                .accessibilityHint("Stops recording and saves the session")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 8)
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().stroke(Shop.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.10), radius: 10, y: 3)
-        .padding(.top, 8)
+        .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
+        .padding(.top, SafeAreaProbe.top + 4)
+        .padding(.trailing, 12)
         .environment(\.colorScheme, .light)
     }
 

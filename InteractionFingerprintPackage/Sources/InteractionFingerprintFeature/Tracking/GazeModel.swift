@@ -28,27 +28,48 @@ public enum GazeSource: String, Codable, Sendable, CaseIterable {
 /// - `usesHeadPose`. Adds head yaw and pitch as terms. ARKit's eye estimate degrades as the
 ///   head turns away from the camera, and if that degradation is systematic it can be
 ///   corrected. Only offered when the head pose actually varied during calibration.
+/// - `usesEyeLook`. Adds ARKit's eye-direction blend shapes, folded into a horizontal and a
+///   vertical term, as a second readout of gaze from the same model. Offered only when they
+///   varied during calibration, and kept only if they lower held-out error.
 public struct GazeBasis: Codable, Sendable, Equatable, Hashable {
     public let order: Int
     public let solvesCameraOffset: Bool
     public let usesHeadPose: Bool
+    public let usesEyeLook: Bool
 
-    public init(order: Int, solvesCameraOffset: Bool, usesHeadPose: Bool) {
+    public init(order: Int, solvesCameraOffset: Bool, usesHeadPose: Bool, usesEyeLook: Bool = false) {
         self.order = order
         self.solvesCameraOffset = solvesCameraOffset
         self.usesHeadPose = usesHeadPose
+        self.usesEyeLook = usesEyeLook
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case order, solvesCameraOffset, usesHeadPose, usesEyeLook
+    }
+
+    /// Models saved before the eye-look terms existed decode with them switched off, so a
+    /// participant's stored calibration survives the upgrade.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        order = try c.decode(Int.self, forKey: .order)
+        solvesCameraOffset = try c.decode(Bool.self, forKey: .solvesCameraOffset)
+        usesHeadPose = try c.decode(Bool.self, forKey: .usesHeadPose)
+        usesEyeLook = try c.decodeIfPresent(Bool.self, forKey: .usesEyeLook) ?? false
     }
 
     public static let allCases: [GazeBasis] = [1, 2].flatMap { order in
         [false, true].flatMap { offset in
-            [false, true].map { pose in
-                GazeBasis(order: order, solvesCameraOffset: offset, usesHeadPose: pose)
+            [false, true].flatMap { pose in
+                [false, true].map { look in
+                    GazeBasis(order: order, solvesCameraOffset: offset, usesHeadPose: pose, usesEyeLook: look)
+                }
             }
         }
     }
 
     var angularTermCount: Int {
-        (order == 2 ? 6 : 3) + (usesHeadPose ? 2 : 0)
+        (order == 2 ? 6 : 3) + (usesHeadPose ? 2 : 0) + (usesEyeLook ? 2 : 0)
     }
 
     public var parameterCount: Int {
@@ -59,24 +80,34 @@ public struct GazeBasis: Codable, Sendable, Equatable, Hashable {
         var parts = [order == 2 ? "quadratic" : "linear"]
         if solvesCameraOffset { parts.append("camera") }
         if usesHeadPose { parts.append("pose") }
+        if usesEyeLook { parts.append("look") }
         return parts.joined(separator: "+")
     }
 
     /// The terms that make up the corrected gaze angle.
-    func angularTerms(u: Double, v: Double, yaw: Double, pitch: Double) -> [Double] {
+    func angularTerms(
+        u: Double, v: Double, yaw: Double, pitch: Double,
+        lookU: Double = 0, lookV: Double = 0
+    ) -> [Double] {
         var terms: [Double] = order == 2 ? [1, u, v, u * u, v * v, u * v] : [1, u, v]
         if usesHeadPose {
             terms.append(yaw)
             terms.append(pitch)
+        }
+        if usesEyeLook {
+            terms.append(lookU)
+            terms.append(lookV)
         }
         return terms
     }
 
     /// One row of the fitting matrix. The camera position enters as a term in one over the
     /// distance, which keeps it linear in the unknowns.
-    func designRow(u: Double, v: Double, yaw: Double, pitch: Double, distance: Double) -> [Double] {
-        var row = angularTerms(u: u, v: v, yaw: yaw, pitch: pitch)
-        if solvesCameraOffset { row.append(-1 / distance) }
+    func designRow(for m: GazeMeasurement) -> [Double] {
+        var row = angularTerms(
+            u: m.u, v: m.v, yaw: m.headYaw, pitch: m.headPitch, lookU: m.lookU, lookV: m.lookV
+        )
+        if solvesCameraOffset { row.append(-1 / m.distance) }
         return row
     }
 }
@@ -92,10 +123,15 @@ public struct GazeMeasurement: Sendable, Equatable {
     /// correction may depend on it, so prediction needs it as well as fitting.
     public let headYaw: Double
     public let headPitch: Double
+    /// ARKit's eye-direction blend shapes folded to one horizontal and one vertical term.
+    /// Zero when they were not captured.
+    public let lookU: Double
+    public let lookV: Double
 
     public init(
         u: Double, v: Double, eyeX: Double, eyeY: Double, distance: Double,
-        headYaw: Double = 0, headPitch: Double = 0
+        headYaw: Double = 0, headPitch: Double = 0,
+        lookU: Double = 0, lookV: Double = 0
     ) {
         self.u = u
         self.v = v
@@ -104,9 +140,15 @@ public struct GazeMeasurement: Sendable, Equatable {
         self.distance = distance
         self.headYaw = headYaw
         self.headPitch = headPitch
+        self.lookU = lookU
+        self.lookV = lookV
     }
 
-    public init?(_ estimate: GazeRay.Estimate, headYaw: Double = 0, headPitch: Double = 0) {
+    public init?(
+        _ estimate: GazeRay.Estimate,
+        headYaw: Double = 0, headPitch: Double = 0,
+        lookU: Double = 0, lookV: Double = 0
+    ) {
         let distance = estimate.viewingDistance
         guard distance > 0.05, distance < 2.0 else { return nil }
         self.init(
@@ -116,7 +158,9 @@ public struct GazeMeasurement: Sendable, Equatable {
             eyeY: Double(estimate.eye.y),
             distance: distance,
             headYaw: headYaw,
-            headPitch: headPitch
+            headPitch: headPitch,
+            lookU: lookU,
+            lookV: lookV
         )
     }
 }
@@ -215,8 +259,11 @@ public struct GazeModel: Codable, Sendable, Equatable {
     public let calibratedDistanceRange: ClosedRange<Double>
     public let createdAt: Date
 
-    public func correct(u: Double, v: Double, yaw: Double = 0, pitch: Double = 0) -> (u: Double, v: Double) {
-        let terms = basis.angularTerms(u: u, v: v, yaw: yaw, pitch: pitch)
+    public func correct(
+        u: Double, v: Double, yaw: Double = 0, pitch: Double = 0,
+        lookU: Double = 0, lookV: Double = 0
+    ) -> (u: Double, v: Double) {
+        let terms = basis.angularTerms(u: u, v: v, yaw: yaw, pitch: pitch, lookU: lookU, lookV: lookV)
         return (
             u: zip(terms, uCoefficients).reduce(0) { $0 + $1.0 * $1.1 },
             v: zip(terms, vCoefficients).reduce(0) { $0 + $1.0 * $1.1 }
@@ -228,7 +275,8 @@ public struct GazeModel: Codable, Sendable, Equatable {
     public func screenPlaneHit(for measurement: GazeMeasurement) -> CGPoint {
         let corrected = correct(
             u: measurement.u, v: measurement.v,
-            yaw: measurement.headYaw, pitch: measurement.headPitch
+            yaw: measurement.headYaw, pitch: measurement.headPitch,
+            lookU: measurement.lookU, lookV: measurement.lookV
         )
         return CGPoint(
             x: measurement.eyeX + measurement.distance * corrected.u - cameraOffsetX,
@@ -308,6 +356,10 @@ public enum GazeModelFitter {
     /// Minimum head rotation range, in radians, before pose terms are offered. About 1.7°.
     static let minimumHeadPoseSpread = 0.03
 
+    /// Minimum range of the folded eye-direction blend shapes, on their 0...1 scale, before
+    /// they are offered as inputs. Below this they were not captured or did not move.
+    static let minimumEyeLookSpread = 0.15
+
     /// Fits every combination of gaze source, basis shape and shrinkage, scores each by
     /// cross-validation, and returns them best first.
     ///
@@ -335,6 +387,13 @@ public enum GazeModelFitter {
                 (pitches.max() ?? 0) - (pitches.min() ?? 0)
             )
 
+            let looksU = usable.compactMap { $0.measurement(for: source)?.lookU }
+            let looksV = usable.compactMap { $0.measurement(for: source)?.lookV }
+            let lookSpread = max(
+                (looksU.max() ?? 0) - (looksU.min() ?? 0),
+                (looksV.max() ?? 0) - (looksV.min() ?? 0)
+            )
+
             for basis in GazeBasis.allCases {
                 // Solving for the camera position needs real distance variation, otherwise
                 // it is indistinguishable from a constant angular offset.
@@ -342,6 +401,8 @@ public enum GazeModelFitter {
                 // Head pose terms are only identifiable if the head actually moved. Fitting
                 // them to a constant would just add noise dressed up as signal.
                 if basis.usesHeadPose, poseSpread < minimumHeadPoseSpread { continue }
+                // Likewise the eye-direction shapes: a column that never moved is noise.
+                if basis.usesEyeLook, lookSpread < minimumEyeLookSpread { continue }
                 // Leaving a group out must still leave the fit over-determined.
                 let smallest = groups.count - 1
                 guard usable.count - (usable.count / max(groups.count, 1)) >= basis.parameterCount + 1,
@@ -531,13 +592,7 @@ public enum GazeModelFitter {
         for point in points {
             guard let measurement = point.measurement(for: source) else { continue }
             let targetMetres = geometry.cameraMetres(fromNormalised: point.target)
-            design.append(
-                basis.designRow(
-                    u: measurement.u, v: measurement.v,
-                    yaw: measurement.headYaw, pitch: measurement.headPitch,
-                    distance: measurement.distance
-                )
-            )
+            design.append(basis.designRow(for: measurement))
             requiredU.append((Double(targetMetres.x) - measurement.eyeX) / measurement.distance)
             requiredV.append((Double(targetMetres.y) - measurement.eyeY) / measurement.distance)
         }

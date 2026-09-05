@@ -12,9 +12,20 @@ There is no separate TrueDepth SDK. Everything comes through ARKit's `ARFaceTrac
 guard ARFaceTrackingConfiguration.isSupported else { /* show unsupported message */ }
 let config = ARFaceTrackingConfiguration()
 config.maximumNumberOfTrackedFaces = 1
+config.worldAlignment = .gravity   // NOT .camera, see below
 session.delegate = self            // ARSessionDelegate
 session.run(config, options: [.resetTracking, .removeExistingAnchors])
 ```
+
+**World alignment.** Leave it on `.gravity`. Apple documents that under `.camera` alignment
+"ARKit performs no device motion tracking", which means the face tracker runs with no idea
+the phone is turning. Compute the face relative to the camera yourself with
+`inverse(frame.camera.transform) * anchor.transform`; that is the same under either
+alignment, so switching costs nothing. Full reasoning in `docs/product/10-MOTION-FUSION.md`.
+
+**Motion.** The gyroscope measures the phone, never the eye. Use it to say how far the screen
+moved under the eyes over about 120 ms, in millimetres, and gate on that (`MotionGate`).
+Do not gate on angular velocity: hand tremor has high velocity and no net displacement.
 
 Requires `NSCameraUsageDescription` (already set in `Config/Shared.xcconfig`). Does **not** run in
 the Simulator. Devices: iPhone X and later with Face ID, and iPad Pro with Face ID.
@@ -26,8 +37,9 @@ the Simulator. Devices: iPhone X and later with Face ID, and iPad Pro with Face 
 - `leftEyeTransform`, `rightEyeTransform`: per-eye pose.
 - `lookAtPoint`: estimated point the eyes converge on, in face-anchor space.
 - `blendShapes`: dictionary of `ARFaceAnchor.BlendShapeLocation` to `NSNumber` in 0...1.
-  V0 records only: `eyeBlinkLeft/Right`, `eyeSquintLeft/Right`, `eyeWideLeft/Right`,
-  `browInnerUp`, `browOuterUpLeft/Right`. Do not record all 52 yet.
+  V0 records: `eyeBlinkLeft/Right`, `eyeSquintLeft/Right`, `eyeWideLeft/Right`,
+  `browInnerUp`, `browOuterUpLeft/Right`, plus the eight `eyeLook*` direction shapes, which
+  are a second readout of gaze offered to the calibration. Do not record all 52.
   Those are Swift case names. The `rawValue` strings that reach the exported data are
   different: `eyeBlink_L`, `eyeSquint_R`, `browOuterUp_L` and so on. Use
   `TrackedBlendShapes.keys` rather than writing either spelling by hand.

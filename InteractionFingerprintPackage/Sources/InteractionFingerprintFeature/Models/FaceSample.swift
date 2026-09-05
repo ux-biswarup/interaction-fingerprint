@@ -26,6 +26,31 @@ public struct HeadPose: Codable, Sendable, Equatable {
     public var offAxisRotation: Double { (pitch * pitch + yaw * yaw).squareRoot() }
 }
 
+/// How the phone was being held and moved on one frame.
+///
+/// A covariate, not a signal. Tilt and roll come from the gravity vector, so they do not
+/// drift; the disturbance figure is how far the screen moved under the eyes over the
+/// reaction window, which is what decides the `device_moving` quality flag.
+/// See `docs/product/10-MOTION-FUSION.md`.
+public struct DeviceAttitude: Codable, Sendable, Equatable {
+    /// Lean of the screen back from vertical, radians. Zero upright, π/2 lying flat face up.
+    public let tilt: Double
+    /// Sideways lean of the long axis, radians. Positive when the top leans to the
+    /// participant's right.
+    public let roll: Double
+    /// Smoothed angular speed of the phone, radians per second.
+    public let rotationRate: Double
+    /// Displacement of the screen under the eyes over the last `MotionGate.window`, metres.
+    public let disturbance: Double
+
+    public init(tilt: Double, roll: Double, rotationRate: Double, disturbance: Double) {
+        self.tilt = tilt
+        self.roll = roll
+        self.rotationRate = rotationRate
+        self.disturbance = disturbance
+    }
+}
+
 /// One frame of observable face and gaze measurements.
 ///
 /// Raw sensor data only. It carries no interpretation: `eyeSquint_L` is a number, never
@@ -79,6 +104,9 @@ public struct FaceSample: Codable, Sendable, Equatable {
 
     public let head: HeadPose?
 
+    /// How the phone was held and moved on this frame. Nil when motion data was unavailable.
+    public let device: DeviceAttitude?
+
     public init(
         timestamp: TimeInterval,
         isTracked: Bool,
@@ -90,7 +118,8 @@ public struct FaceSample: Codable, Sendable, Equatable {
         gazeX: Double?, gazeY: Double?,
         isCalibrated: Bool,
         signals: [String: Double],
-        head: HeadPose?
+        head: HeadPose?,
+        device: DeviceAttitude? = nil
     ) {
         self.timestamp = timestamp
         self.isTracked = isTracked
@@ -108,6 +137,7 @@ public struct FaceSample: Codable, Sendable, Equatable {
         self.isCalibrated = isCalibrated
         self.signals = signals
         self.head = head
+        self.device = device
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -115,7 +145,7 @@ public struct FaceSample: Codable, Sendable, Equatable {
         case eyeX, eyeY, eyeZ
         case convergenceU, convergenceV, perEyeU, perEyeV
         case gazeX, gazeY, isCalibrated
-        case signals, head
+        case signals, head, device
     }
 
     /// Written by hand because the synthesised encoder omits nil optionals entirely.
@@ -142,6 +172,8 @@ public struct FaceSample: Codable, Sendable, Equatable {
 
         if let head { try container.encode(head, forKey: .head) }
         else { try container.encodeNil(forKey: .head) }
+        if let device { try container.encode(device, forKey: .device) }
+        else { try container.encodeNil(forKey: .device) }
     }
 
     private func encodeOrNull(

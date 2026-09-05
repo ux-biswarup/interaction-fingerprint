@@ -75,14 +75,13 @@ struct ProductListView: View {
 
     private var header: some View {
         VStack(spacing: 0) {
+            // The right-hand side of this row is left clear for the recording control,
+            // which floats over it during a session.
             HStack(alignment: .firstTextBaseline) {
                 Text("Shop")
                     .font(.system(size: 26, weight: .bold))
                     .foregroundStyle(Shop.ink)
                 Spacer()
-                Text("\(Product.catalogue.count) items")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Shop.inkSecondary)
             }
             .padding(.horizontal, 16)
             .padding(.top, SafeAreaProbe.top + 6)

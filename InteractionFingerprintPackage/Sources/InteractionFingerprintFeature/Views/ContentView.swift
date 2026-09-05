@@ -53,7 +53,10 @@ public struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if isStimulusPreview {
+        if isStimulusPreview, ProcessInfo.processInfo.arguments.contains("-recording") {
+            // The recording chrome over the stimulus, without a device.
+            StudySessionView(tracking: tracking) { _ in }
+        } else if isStimulusPreview {
             ShopView(
                 recorder: EventRecorder(),
                 startOn: ProcessInfo.processInfo.arguments.contains("-detail")
@@ -107,7 +110,12 @@ public struct ContentView: View {
             Instrument.ink.ignoresSafeArea()
 
             if tracking.state == .running, let gaze = tracking.displayGaze {
-                GazeDot(normalised: gaze, viewport: viewport, isConfident: tracking.quality.isConfident)
+                // A moving phone is a fact about the data, not a reason to change the dot.
+                GazeDot(
+                    normalised: gaze,
+                    viewport: viewport,
+                    isConfident: tracking.quality.isConfident || tracking.quality == .deviceMoving
+                )
             }
 
             VStack(spacing: 0) {
@@ -193,7 +201,9 @@ public struct ContentView: View {
                     Instrument.reading("— cm", size: 11)
                 }
                 Spacer()
-                Instrument.reading(String(format: "%.2f rad/s", tracking.deviceRotationRate), size: 11)
+                // Millimetres the screen moved under the eyes in the last reaction window,
+                // which is the quantity the motion gate actually judges.
+                Instrument.reading(String(format: "%.0f mm moved", tracking.motionDisturbance * 1000), size: 11)
                     .foregroundStyle(tracking.deviceIsSteady ? Instrument.paperDim : Instrument.warn)
             }
             gazeRow
@@ -217,12 +227,28 @@ public struct ContentView: View {
             } else {
                 Instrument.reading("angle   —", size: 11).foregroundStyle(Instrument.paperDim)
             }
+            // Eye position relative to the camera. Move the phone sideways with the head
+            // still: x should change and y should not. If they are swapped, the camera
+            // frame is rotated relative to what the geometry assumes.
+            if let sample = tracking.latest, let x = sample.eyeX, let y = sample.eyeY {
+                Instrument.reading(String(format: "eye     x %+.1f cm  y %+.1f cm", x * 100, y * 100), size: 11)
+                    .foregroundStyle(Instrument.paperDim)
+            } else {
+                Instrument.reading("eye     —", size: 11).foregroundStyle(Instrument.paperDim)
+            }
+            if let device = tracking.latest?.device {
+                Instrument.reading(
+                    String(format: "phone   tilt %+.0f°  roll %+.0f°", device.tilt * 180 / .pi, device.roll * 180 / .pi),
+                    size: 11
+                )
+                .foregroundStyle(Instrument.paperDim)
+            }
         }
     }
 
     private var blendShapeList: some View {
         VStack(alignment: .leading, spacing: 2) {
-            ForEach(TrackedBlendShapes.keys, id: \.self) { key in
+            ForEach(TrackedBlendShapes.expressionKeys, id: \.self) { key in
                 let value = tracking.latest?.signals[key] ?? 0
                 HStack(spacing: 8) {
                     Text(label(for: key))

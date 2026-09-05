@@ -12,6 +12,11 @@ tracked-frame share above 90%, sample rate near 60 Hz, and a calibration whose m
 residual is small enough that the intended areas of interest can be told apart. Gaze
 without a calibration figure attached is not evidence.
 
+Reached 1.62° on device, see `09-GAZE-ACCURACY.md`. Device motion is handled as set out in
+`10-MOTION-FUSION.md`: ARKit's inertial tracking is on, the motion gate judges how far the
+screen moved under the eyes in millimetres, and how the phone is held is recorded with every
+sample.
+
 ## Phase 2 — Instrumentation
 Taps, scrolls, screen/product IDs, areas of interest, JSON export.
 

@@ -37,9 +37,20 @@ public final class FaceTrackingSession {
     public private(set) var trackedFrameCount: Int = 0
     public private(set) var measuredHz: Double = 0
 
-    /// Device rotation rate in radians per second, from the gyroscope.
+    /// Device rotation rate in radians per second, from the gyroscope. A covariate.
     public var deviceRotationRate: Double { motion.rotationRate }
-    public var deviceIsSteady: Bool { motion.isSteady }
+    /// False while the screen has recently moved further under the eyes than the tracker
+    /// can absorb. See `MotionGate`.
+    public var deviceIsSteady: Bool { gate.isSteady }
+    /// How far the screen moved under the eyes over the last reaction window, in metres.
+    public var motionDisturbance: Double { gate.disturbance }
+    /// How the phone is being held right now.
+    public var deviceAttitude: DeviceAttitude {
+        DeviceAttitude(
+            tilt: motion.tilt, roll: motion.roll,
+            rotationRate: motion.rotationRate, disturbance: gate.disturbance
+        )
+    }
 
     /// Ambient light, in lumens, and its colour temperature in kelvin. Recorded as a
     /// covariate rather than a signal.
@@ -63,6 +74,7 @@ public final class FaceTrackingSession {
     private let session = ARSession()
     private let proxy = ARSessionProxy()
     private let motion = DeviceMotionMonitor()
+    private var gate = MotionGate()
     private var horizontalFilter = OneEuroFilter()
     private var verticalFilter = OneEuroFilter()
     private var hzWindowStart: TimeInterval = 0
@@ -105,10 +117,18 @@ public final class FaceTrackingSession {
         latestCalibrationSample = nil
         horizontalFilter.reset()
         verticalFilter.reset()
+        gate.reset()
 
         let configuration = ARFaceTrackingConfiguration()
         configuration.maximumNumberOfTrackedFaces = 1
-        configuration.worldAlignment = .camera
+        // Gravity alignment switches ARKit's own device motion tracking on. Under `.camera`
+        // alignment Apple documents that "ARKit performs no device motion tracking" at all,
+        // so the face tracker would run with no knowledge of the phone turning. The gaze
+        // geometry below is computed relative to the camera on every frame and is unaffected
+        // by the choice; what changes is that ARKit now works in a frame where the head is
+        // still and the phone is the thing moving, which is the truth.
+        // See docs/product/10-MOTION-FUSION.md section 3.
+        configuration.worldAlignment = .gravity
         // Ambient light is cheap to collect and explains variance that would otherwise
         // look like a difference between participants: pupil size and tracking reliability
         // both depend on how bright the room is.
@@ -142,6 +162,7 @@ public final class FaceTrackingSession {
             let anchor = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first,
             anchor.isTracked
         else {
+            gate.update(netRotation: motion.netRotation, acceleration: motion.acceleration, distance: nil)
             quality = .noFace
             latestCalibrationSample = nil
             latest = untrackedSample(at: frame.timestamp)
@@ -153,6 +174,7 @@ public final class FaceTrackingSession {
 
         let signals = Self.signals(from: anchor)
         let eyesOpen = TrackedBlendShapes.eyesOpen(in: signals)
+        let look = TrackedBlendShapes.eyeLookTerms(in: signals)
         let faceInCamera = simd_mul(simd_inverse(frame.camera.transform), anchor.transform)
         let head = Self.headPose(from: faceInCamera)
 
@@ -170,19 +192,27 @@ public final class FaceTrackingSession {
         )
 
         let convergenceMeasurement = convergence.flatMap {
-            GazeMeasurement($0, headYaw: head.yaw, headPitch: head.pitch)
+            GazeMeasurement($0, headYaw: head.yaw, headPitch: head.pitch, lookU: look.u, lookV: look.v)
         }
         let perEyeMeasurement = perEye.flatMap {
-            GazeMeasurement($0, headYaw: head.yaw, headPitch: head.pitch)
+            GazeMeasurement($0, headYaw: head.yaw, headPitch: head.pitch, lookU: look.u, lookV: look.v)
         }
         let reference = convergenceMeasurement ?? perEyeMeasurement
+
+        // The motion verdict is made in millimetres on the screen, which needs the viewing
+        // distance measured on this very frame.
+        gate.update(
+            netRotation: motion.netRotation,
+            acceleration: motion.acceleration,
+            distance: reference?.distance
+        )
 
         quality = GazeQuality.evaluate(
             isTracked: true,
             eyesOpen: eyesOpen,
             distance: reference?.distance,
             headRotation: head.offAxisRotation,
-            deviceIsSteady: motion.isSteady,
+            deviceIsSteady: gate.isSteady,
             model: model
         )
 
@@ -214,21 +244,18 @@ public final class FaceTrackingSession {
             gazeY: normalised.map { Double($0.y) },
             isCalibrated: model != nil,
             signals: signals,
-            head: head
+            head: head,
+            device: motion.isAvailable ? deviceAttitude : nil
         )
 
         // What counts as data and what should be drawn are different questions.
         //
         // During a blink the estimate is meaningless and would fling the dot across the
-        // screen, so drawing stops. While the phone is being moved the estimate is merely
-        // less reliable, and freezing the dot only to have it jump when the gate reopens
-        // looks far worse than letting it drift. So it keeps moving, smoothed harder and
-        // dimmed, while the sample is still marked unusable for analysis.
+        // screen, so drawing stops. Every other verdict, including the phone being moved,
+        // is a fact about the data and not about the drawing: the dot keeps the same filter
+        // and the same appearance throughout, because a dot that changes character every
+        // time a threshold is crossed reads as instability even when the estimate is fine.
         guard shouldDraw(quality), let normalised else { return }
-
-        let heavy = !motion.isSteady
-        horizontalFilter.minCutoff = heavy ? 0.4 : 1.0
-        verticalFilter.minCutoff = heavy ? 0.4 : 1.0
 
         displayGaze = CGPoint(
             x: horizontalFilter.filter(Double(normalised.x), timestamp: frame.timestamp),
@@ -255,7 +282,8 @@ public final class FaceTrackingSession {
             gazeX: nil, gazeY: nil,
             isCalibrated: model != nil,
             signals: [:],
-            head: nil
+            head: nil,
+            device: motion.isAvailable ? deviceAttitude : nil
         )
     }
 

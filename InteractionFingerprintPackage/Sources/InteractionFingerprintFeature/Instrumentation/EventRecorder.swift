@@ -198,10 +198,23 @@ public final class EventRecorder {
             productID: area?.productID,
             x: sample.gazeX,
             y: sample.gazeY,
+            metrics: Self.deviceMetrics(sample.device),
             eyesOpen: sample.eyesOpen,
             quality: sample.quality,
             signals: sample.signals
         ))
+    }
+
+    /// How the phone was held and moved, carried on every gaze row as a covariate.
+    /// Keys are documented in `05-DATA-SCHEMA.md`.
+    nonisolated static func deviceMetrics(_ device: DeviceAttitude?) -> [String: Double] {
+        guard let device else { return [:] }
+        return [
+            "deviceTiltRad": device.tilt,
+            "deviceRollRad": device.roll,
+            "deviceRotationRadPerS": device.rotationRate,
+            "deviceDisturbanceMm": device.disturbance * 1000,
+        ]
     }
 
     /// Ambient light, recorded because tracking quality and pupil size both depend on it.

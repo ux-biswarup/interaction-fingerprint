@@ -255,4 +255,7 @@ Agreed order, to begin once the sensing layer meets its exit criterion:
    this platform, but it needs a companion watchOS app, so it is a separate milestone.
 
 Already in use: the gyroscope and accelerometer, both for rejecting frames captured while
-the phone was moving and as a measure of hand steadiness.
+the phone was moving and as a measure of hand steadiness. How they are used, and why the
+gate judges displacement in millimetres rather than angular velocity, is set out in
+`10-MOTION-FUSION.md`, which also records that ARKit's own device motion tracking had
+been switched off and is now on.

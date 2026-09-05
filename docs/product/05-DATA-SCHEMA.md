@@ -91,7 +91,7 @@ join into analysis, where an off-by-one would be invisible.
 | `metrics` | Event-specific numbers. Documented below. |
 | `eyesOpen` | False during a blink. Sample kept so blink rate stays measurable. |
 | `quality` | Why the gaze on this row is or is not trustworthy. |
-| `signals` | Blend-shape coefficients, keyed by ARKit raw value. |
+| `signals` | Blend-shape coefficients, keyed by ARKit raw value. Nine expression shapes (`eyeBlink_L`, `eyeBlink_R`, `eyeSquint_L`, `eyeSquint_R`, `eyeWide_L`, `eyeWide_R`, `browInnerUp`, `browOuterUp_L`, `browOuterUp_R`) and eight eye-direction shapes (`eyeLookUp_L`, `eyeLookDown_L`, `eyeLookIn_L`, `eyeLookOut_L` and the `_R` set). |
 
 Absent values are written as explicit `null`, never omitted, so pandas receives the same
 columns on every row.
@@ -115,6 +115,10 @@ columns on every row.
 | `reversals` | `scroll` | Running count. Steady scrolling is reading; back and forth is searching. |
 | `ambientIntensity` | `ambient_light` | Lumens. A covariate, not a signal: a darker room otherwise looks like a participant difference. |
 | `colourTemperature` | `ambient_light` | Kelvin. |
+| `deviceTiltRad` | `gaze` | How far the screen leans back from vertical, radians. 0 upright, π/2 flat facing up. From gravity, so it does not drift. How the phone is held is a covariate the analysis needs; a participant lying down is a different viewing geometry. |
+| `deviceRollRad` | `gaze` | Sideways lean of the phone, radians. Positive when the top leans to the participant's right. |
+| `deviceRotationRadPerS` | `gaze` | Smoothed angular speed of the phone. A hand-steadiness covariate. |
+| `deviceDisturbanceMm` | `gaze` | How far the screen moved under the eyes over the last 120 ms. Above 20 the row's `quality` reads `device_moving`. See `10-MOTION-FUSION.md`. |
 
 ### Session record
 

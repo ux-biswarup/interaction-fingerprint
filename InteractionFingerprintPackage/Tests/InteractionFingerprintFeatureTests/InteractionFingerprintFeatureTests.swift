@@ -75,17 +75,40 @@ private struct SyntheticObserver {
 
 // MARK: - Blend shapes
 
-@Test("V0 records exactly the nine blend shapes named in the setup guide")
+@Test("V0 records the nine expression shapes named in the setup guide plus the eight eye-direction shapes")
 func trackedBlendShapesMatchTheGuide() {
-    #expect(TrackedBlendShapes.all.count == 9)
+    #expect(TrackedBlendShapes.expression.count == 9)
+    #expect(TrackedBlendShapes.eyeDirection.count == 8)
+    #expect(TrackedBlendShapes.all.count == 17)
     // ARKit's raw values are not the Swift case names. Pinned here so an SDK change to the
     // exported column names fails a test instead of silently breaking every notebook.
-    #expect(Set(TrackedBlendShapes.keys) == [
+    #expect(Set(TrackedBlendShapes.expressionKeys) == [
         "eyeBlink_L", "eyeBlink_R",
         "eyeSquint_L", "eyeSquint_R",
         "eyeWide_L", "eyeWide_R",
         "browInnerUp", "browOuterUp_L", "browOuterUp_R",
     ])
+    #expect(Set(TrackedBlendShapes.eyeDirection.map(\.rawValue)) == [
+        "eyeLookUp_L", "eyeLookDown_L", "eyeLookIn_L", "eyeLookOut_L",
+        "eyeLookUp_R", "eyeLookDown_R", "eyeLookIn_R", "eyeLookOut_R",
+    ])
+}
+
+@Test("The eight eye-direction shapes fold to one horizontal and one vertical term that agree across the two eyes")
+func eyeLookShapesFold() {
+    // Both eyes looking the same way: the left eye turns in towards the nose while the
+    // right eye turns out, and the fold must add them rather than cancel them.
+    let rightward = TrackedBlendShapes.eyeLookTerms(in: ["eyeLookIn_L": 0.6, "eyeLookOut_R": 0.6])
+    #expect(abs(rightward.u - 0.6) < 1e-12)
+    #expect(abs(rightward.v) < 1e-12)
+
+    let upward = TrackedBlendShapes.eyeLookTerms(in: ["eyeLookUp_L": 0.4, "eyeLookUp_R": 0.4])
+    #expect(abs(upward.v - 0.4) < 1e-12)
+    #expect(abs(upward.u) < 1e-12)
+
+    // Missing values read as zero, not as a crash.
+    let none = TrackedBlendShapes.eyeLookTerms(in: [:])
+    #expect(none.u == 0 && none.v == 0)
 }
 
 @Test("Blend shape key order is stable, so exported columns keep a fixed order")
@@ -432,6 +455,83 @@ func motionMagnitudeCombinesAxes() {
     #expect(abs(DeviceMotionMonitor.magnitude(0, 0, 0)) < 1e-12)
 }
 
+@Test("The angle between two attitudes is the rotation that separates them, whatever the axis")
+func attitudeAngleIsAxisFree() {
+    let identity = simd_quatd(angle: 0, axis: SIMD3(0, 0, 1))
+    for axis in [SIMD3<Double>(1, 0, 0), SIMD3(0, 1, 0), SIMD3(0, 0, 1), simd_normalize(SIMD3<Double>(1, 1, 0))] {
+        let turned = simd_quatd(angle: 0.25, axis: axis)
+        #expect(abs(DeviceMotionMonitor.angle(between: identity, and: turned) - 0.25) < 1e-9)
+        // The sign of the quaternion is a representation detail, not a rotation.
+        let negated = simd_quatd(vector: -turned.vector)
+        #expect(abs(DeviceMotionMonitor.angle(between: identity, and: negated) - 0.25) < 1e-9)
+    }
+}
+
+@Test("Net rotation looks back over the window, not over the whole history")
+func netRotationUsesTheWindow() {
+    // Turned 20° a second ago, then held still. Over a 120 ms window, nothing moved.
+    let axis = SIMD3<Double>(1, 0, 0)
+    var history: [(timestamp: TimeInterval, orientation: simd_quatd)] = []
+    history.append((0.0, simd_quatd(angle: 0, axis: axis)))
+    for step in 1...100 {
+        history.append((Double(step) / 100, simd_quatd(angle: 0.35, axis: axis)))
+    }
+    #expect(DeviceMotionMonitor.netRotation(in: history, over: MotionGate.window) < 1e-9)
+
+    // Turning steadily at 1 rad/s reads as 0.12 rad over the window.
+    let steady = (0...100).map { step in
+        (timestamp: Double(step) / 100, orientation: simd_quatd(angle: Double(step) / 100, axis: axis))
+    }
+    #expect(abs(DeviceMotionMonitor.netRotation(in: steady, over: 0.12) - 0.12) < 1e-6)
+}
+
+@MainActor
+@Test("Tremor has high angular velocity but almost no net rotation, and the monitor sees the difference")
+func tremorHasVelocityWithoutDisplacement() {
+    let monitor = DeviceMotionMonitor()
+    let axis = SIMD3<Double>(1, 0, 0)
+    // Half a degree of amplitude at 8 Hz, sampled at 100 Hz for a second.
+    let amplitude = 0.5 * .pi / 180
+    let frequency = 8.0
+    for step in 0..<100 {
+        let t = Double(step) / 100
+        let angle = amplitude * sin(2 * .pi * frequency * t)
+        let rate = abs(amplitude * 2 * .pi * frequency * cos(2 * .pi * frequency * t))
+        monitor.ingest(
+            rotationRate: rate,
+            acceleration: 0.02,
+            attitude: simd_quatd(angle: angle, axis: axis),
+            gravity: SIMD3(0, -1, 0),
+            timestamp: t
+        )
+    }
+    // Peak velocity about 25°/s, well above the old velocity gate.
+    #expect(monitor.rotationRate > 0.2)
+    // Net rotation over the window: at most twice the amplitude, about a degree.
+    #expect(monitor.netRotation <= 2 * amplitude + 1e-9)
+    // And the gate, at 40 cm, calls that steady.
+    var gate = MotionGate()
+    let steady = gate.update(netRotation: monitor.netRotation, acceleration: monitor.acceleration, distance: 0.40)
+    #expect(steady)
+    #expect(gate.disturbance < MotionGate.steadyThreshold)
+}
+
+@Test("Tilt and roll come straight from the gravity vector")
+func leanFromGravity() {
+    // Upright: gravity points down the long axis.
+    let upright = DeviceMotionMonitor.lean(gravity: SIMD3(0, -1, 0))
+    #expect(abs(upright.tilt) < 1e-9 && abs(upright.roll) < 1e-9)
+    // Flat on a table, screen up: gravity points into the back of the phone.
+    let flat = DeviceMotionMonitor.lean(gravity: SIMD3(0, 0, -1))
+    #expect(abs(flat.tilt - .pi / 2) < 1e-9)
+    // Leaned back thirty degrees, the usual reading posture.
+    let reading = DeviceMotionMonitor.lean(gravity: SIMD3(0, -cos(Double.pi / 6), -sin(Double.pi / 6)))
+    #expect(abs(reading.tilt - .pi / 6) < 1e-9)
+    // Top of the phone leaning to the participant's right is a positive roll.
+    let leaning = DeviceMotionMonitor.lean(gravity: SIMD3(sin(0.2), -cos(0.2), 0))
+    #expect(abs(leaning.roll - 0.2) < 1e-9)
+}
+
 // MARK: - Smoothing
 
 @Test("The filter passes the first sample through and then converges on a steady value")
@@ -482,9 +582,30 @@ func untrackedSampleKeepsNullGaze() throws {
 
     #expect(object?["isTracked"] as? Bool == false)
     #expect(object?["quality"] as? String == "no_face")
-    for key in ["gazeX", "gazeY", "convergenceU", "perEyeV", "eyeZ", "head"] {
+    for key in ["gazeX", "gazeY", "convergenceU", "perEyeV", "eyeZ", "head", "device"] {
         #expect(object?[key] is NSNull)
     }
+}
+
+@Test("How the phone was held rides along with every sample and every gaze row")
+func deviceAttitudeIsRecorded() throws {
+    let attitude = DeviceAttitude(tilt: 0.5, roll: -0.1, rotationRate: 0.3, disturbance: 0.004)
+    let sample = FaceSample(
+        timestamp: 1, isTracked: true, eyesOpen: true, quality: "good",
+        eyeX: 0, eyeY: 0, eyeZ: -0.35,
+        convergenceU: 0, convergenceV: 0, perEyeU: nil, perEyeV: nil,
+        gazeX: 0.5, gazeY: 0.5, isCalibrated: true, signals: [:], head: nil,
+        device: attitude
+    )
+    let data = try JSONEncoder().encode(sample)
+    #expect(try JSONDecoder().decode(FaceSample.self, from: data).device == attitude)
+
+    let metrics = EventRecorder.deviceMetrics(attitude)
+    #expect(metrics["deviceTiltRad"] == 0.5)
+    #expect(metrics["deviceRollRad"] == -0.1)
+    #expect(metrics["deviceRotationRadPerS"] == 0.3)
+    #expect(abs((metrics["deviceDisturbanceMm"] ?? 0) - 4) < 1e-9)
+    #expect(EventRecorder.deviceMetrics(nil).isEmpty)
 }
 
 @Test("Head pose reports combined off-axis rotation for the envelope check")
@@ -655,6 +776,56 @@ func headPoseTermsNeedHeadMovement() throws {
     #expect(!model.basis.usesHeadPose)
 }
 
+@Test("Eye-direction shape terms are refused when they were never captured")
+func eyeLookTermsNeedVariation() throws {
+    let observer = SyntheticObserver()
+    let model = try #require(
+        GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry)
+    )
+    // Every synthetic frame carries zero for the folded shapes, so they are not offered.
+    #expect(!model.basis.usesEyeLook)
+    #expect(!model.summary.contains("look"))
+}
+
+@Test("Eye-direction shapes are chosen when they carry the gaze and the eye transform does not")
+func eyeLookTermsAreUsedWhenInformative() throws {
+    // A person whose eye transforms report nothing useful, while the expression shapes
+    // track where they look exactly. The fit must discover that on its own.
+    let geometry = ScreenGeometry(pointSize: CGSize(width: 393, height: 852), displayScale: 3)
+    let eyeX = 0.01, eyeY = -0.04
+    var points: [GazeCalibrationPoint] = []
+    for (index, target) in GazeCalibrationRun.targets.enumerated() {
+        for distance in [0.32, 0.46] {
+            let metres = geometry.cameraMetres(fromNormalised: target)
+            let trueU = (Double(metres.x) - eyeX) / distance
+            let trueV = (Double(metres.y) - eyeY) / distance
+            for _ in 0..<12 {
+                let m = GazeMeasurement(
+                    u: 0.05, v: -0.02, eyeX: eyeX, eyeY: eyeY, distance: distance,
+                    lookU: 0.9 * trueU + 0.1, lookV: 0.8 * trueV - 0.05
+                )
+                points.append(GazeCalibrationPoint(
+                    target: target, targetIndex: index, convergence: m, perEye: m, headYaw: 0, headPitch: 0
+                ))
+            }
+        }
+    }
+    let model = try #require(GazeModelFitter.best(points: points, geometry: geometry))
+    #expect(model.basis.usesEyeLook)
+    #expect(model.summary.contains("look"))
+    #expect(model.accuracyPoints < 2)
+}
+
+@Test("A calibration saved before the eye-direction terms existed still loads")
+func basisDecodesWithoutEyeLookKey() throws {
+    let legacy = Data(#"{"order":2,"solvesCameraOffset":true,"usesHeadPose":false}"#.utf8)
+    let basis = try JSONDecoder().decode(GazeBasis.self, from: legacy)
+    #expect(basis.order == 2)
+    #expect(basis.solvesCameraOffset)
+    #expect(!basis.usesEyeLook)
+    #expect(basis.parameterCount == 7)
+}
+
 @Test("The calibration grid is taller than it is wide, matching the display")
 func calibrationGridMatchesScreenShape() {
     let targets = GazeCalibrationRun.targets
@@ -786,51 +957,70 @@ func generalisationGapIsReported() throws {
 
 // MARK: - Device motion gating
 
-@Test("Ordinary hand tremor does not count as the phone being moved")
-func handTremorIsNotMotion() {
-    // A hand at rest still rotates a few tenths of a radian per second. A gate that fires
-    // on that discards frames dozens of times a second and makes the dot lurch.
-    #expect(DeviceMotionMonitor.updatedSteadiness(wasSteady: true, rotation: 0.25, acceleration: 0.08))
-    #expect(DeviceMotionMonitor.updatedSteadiness(wasSteady: true, rotation: 0.6, acceleration: 0.2))
+@Test("The gate measures how far the screen moved under the eyes, in metres")
+func gateMeasuresDisplacementOnTheScreen() {
+    // One degree of net rotation at 40 cm is seven millimetres.
+    let rotationOnly = MotionGate.disturbance(netRotation: .pi / 180, acceleration: 0, distance: 0.40)
+    #expect(abs(rotationOnly - 0.40 * .pi / 180) < 1e-9)
+    // The same angle further away moves the screen further.
+    #expect(MotionGate.disturbance(netRotation: .pi / 180, acceleration: 0, distance: 0.60) > rotationOnly)
+    // Half a g for the whole window is about 35 mm of translation.
+    let translationOnly = MotionGate.disturbance(netRotation: 0, acceleration: 0.5, distance: 0.40)
+    #expect(abs(translationOnly - 0.5 * 0.5 * 9.80665 * 0.12 * 0.12) < 1e-9)
+    // No face: a nominal reading distance is assumed rather than dividing by nothing.
+    #expect(MotionGate.disturbance(netRotation: 0.1, acceleration: 0, distance: nil) == 0.1 * MotionGate.fallbackDistance)
 }
 
-@Test("A deliberate reposition does count")
-func repositionIsMotion() {
-    #expect(!DeviceMotionMonitor.updatedSteadiness(wasSteady: true, rotation: 2.0, acceleration: 0.1))
-    #expect(!DeviceMotionMonitor.updatedSteadiness(wasSteady: true, rotation: 0.1, acceleration: 0.9))
+@Test("Ordinary hand tremor does not count as the phone being moved, a reposition does")
+func gateSeparatesTremorFromReposition() {
+    var gate = MotionGate()
+    // A degree of drift while reading, and the faint acceleration of a resting hand.
+    let drift = gate.update(netRotation: .pi / 180, acceleration: 0.03, distance: 0.40)
+    #expect(drift)
+    // Ten degrees in the reaction window is a deliberate movement.
+    let reposition = gate.update(netRotation: 10 * .pi / 180, acceleration: 0.03, distance: 0.40)
+    #expect(!reposition)
+    // Translation alone can do it too.
+    var another = MotionGate()
+    let shove = another.update(netRotation: 0, acceleration: 0.6, distance: 0.40)
+    #expect(!shove)
 }
 
 @Test("The verdict does not flicker in the band between the two thresholds")
-func steadinessHasHysteresis() {
+func gateHasHysteresis() {
     // Sitting between the thresholds, the previous verdict stands. Without this the gate
-    // chatters, and every flip is a discarded frame and a visible jump.
-    let between = 1.2
-    #expect(DeviceMotionMonitor.updatedSteadiness(wasSteady: true, rotation: between, acceleration: 0))
-    #expect(!DeviceMotionMonitor.updatedSteadiness(wasSteady: false, rotation: between, acceleration: 0))
+    // chatters, and every flip is a discarded frame.
+    let between = (MotionGate.steadyThreshold + MotionGate.movingThreshold) / 2
+    #expect(MotionGate.verdict(wasSteady: true, disturbance: between))
+    #expect(!MotionGate.verdict(wasSteady: false, disturbance: between))
+    #expect(MotionGate.verdict(wasSteady: false, disturbance: MotionGate.steadyThreshold / 2))
 }
 
 @MainActor
-@Test("A single jolt does not trip the gate, sustained movement does")
-func motionIsSmoothedBeforeJudging() {
+@Test("A sharp knock has a large velocity but no net rotation, so it does not trip the gate")
+func knockDoesNotTripTheGate() {
     let monitor = DeviceMotionMonitor()
+    let axis = SIMD3<Double>(0, 1, 0)
     var t = 0.0
     for _ in 0..<30 {
-        monitor.ingest(rotation: 0.1, acceleration: 0.05, timestamp: t)
-        t += 1.0 / 60.0
+        monitor.ingest(rotationRate: 0.05, acceleration: 0.02, attitude: simd_quatd(angle: 0, axis: axis), gravity: SIMD3(0, -1, 0), timestamp: t)
+        t += 0.01
     }
-    #expect(monitor.isSteady)
+    // Two samples of a jolt: the phone twitches a degree and comes straight back.
+    monitor.ingest(rotationRate: 6.0, acceleration: 0.2, attitude: simd_quatd(angle: 0.017, axis: axis), gravity: SIMD3(0, -1, 0), timestamp: t)
+    t += 0.01
+    monitor.ingest(rotationRate: 6.0, acceleration: 0.2, attitude: simd_quatd(angle: 0, axis: axis), gravity: SIMD3(0, -1, 0), timestamp: t)
+    var gate = MotionGate()
+    let afterKnock = gate.update(netRotation: monitor.netRotation, acceleration: monitor.acceleration, distance: 0.40)
+    #expect(afterKnock)
 
-    // One wild frame, the kind a knuckle knock produces.
-    monitor.ingest(rotation: 6.0, acceleration: 2.0, timestamp: t)
-    t += 1.0 / 60.0
-    #expect(monitor.isSteady)
-
-    // Sustained movement gets through.
-    for _ in 0..<30 {
-        monitor.ingest(rotation: 3.0, acceleration: 1.0, timestamp: t)
-        t += 1.0 / 60.0
+    // A sustained turn, however, does count.
+    for step in 1...20 {
+        t += 0.01
+        monitor.ingest(rotationRate: 1.5, acceleration: 0.05, attitude: simd_quatd(angle: 0.015 * Double(step), axis: axis), gravity: SIMD3(0, -1, 0), timestamp: t)
     }
-    #expect(!monitor.isSteady)
+    let afterTurn = gate.update(netRotation: monitor.netRotation, acceleration: monitor.acceleration, distance: 0.40)
+    #expect(!afterTurn)
 }
 
 // MARK: - Instrumentation
