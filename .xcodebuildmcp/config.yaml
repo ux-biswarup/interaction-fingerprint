@@ -1,0 +1,14 @@
+schemaVersion: 1
+
+# Tool groups exposed to MCP clients. Only "simulator" is on by default;
+# "device" is required to build, install, and launch on a physical iPhone,
+# which is the only way to test ARKit face tracking.
+enabledWorkflows: ["simulator", "device"]
+
+# Portable defaults only. simulatorName is re-resolved to this machine's UDID
+# at runtime, so no machine-local identifiers are committed here.
+sessionDefaults:
+  workspacePath: InteractionFingerprint.xcworkspace
+  scheme: InteractionFingerprint
+  simulatorName: iPhone 17
+  bundleId: com.biswarupmondal.InteractionFingerprint
