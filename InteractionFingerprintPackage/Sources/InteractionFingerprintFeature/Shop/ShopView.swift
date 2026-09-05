@@ -2,35 +2,46 @@ import SwiftUI
 
 /// The study stimulus: a small product catalogue a participant can browse.
 ///
-/// Deliberately plain. A distinctive interface would itself become a variable, and the
-/// experiment is about what people look at, not about whether they liked the design. Every
-/// region a hypothesis refers to is marked with `areaOfInterest` and sized generously,
-/// because gaze lands within roughly 11 mm and two regions closer than about 23 mm cannot
-/// be told apart. See `09-GAZE-ACCURACY.md`.
+/// Plain on purpose, but not crude. A shoddy interface changes how people behave in it,
+/// so the stimulus has to read as an ordinary competent shop while carrying nothing
+/// memorable enough to draw the eye for its own sake.
+///
+/// Every region a hypothesis refers to is marked with `areaOfInterest` and sized to at
+/// least twice the measured gaze error, because two regions closer than that cannot be
+/// told apart. See `09-GAZE-ACCURACY.md`.
 public struct ShopView: View {
     let recorder: EventRecorder
     @State private var selected: Product?
 
-    public init(recorder: EventRecorder) {
+    public init(recorder: EventRecorder, startOn product: Product? = nil) {
         self.recorder = recorder
+        _selected = State(initialValue: product)
     }
 
     public var body: some View {
-        Group {
+        ZStack {
+            Shop.background.ignoresSafeArea()
             if let product = selected {
                 ProductDetailView(product: product, recorder: recorder) {
                     recorder.wentBack(from: .productDetail, productID: product.id)
                     selected = nil
                 }
+                .transition(.opacity)
             } else {
                 ProductListView(recorder: recorder) { product in
                     selected = product
                 }
+                .transition(.opacity)
             }
         }
-        .background(Color(white: 0.98))
+        .tint(Shop.action)
+        // Pinned so the stimulus is identical for every participant regardless of their
+        // own display settings.
+        .environment(\.colorScheme, .light)
     }
 }
+
+// MARK: - List
 
 struct ProductListView: View {
     let recorder: EventRecorder
@@ -38,16 +49,18 @@ struct ProductListView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 14) {
+            LazyVStack(spacing: 12) {
                 ForEach(Product.catalogue) { product in
                     Button { onSelect(product) } label: {
                         row(product)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CardButtonStyle())
                     .areaOfInterest(.listItem, on: .productList, productID: product.id)
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, SafeAreaProbe.bottom + 24)
         }
         .scrollIndicators(.hidden)
         .onScrollGeometryChange(for: Double.self) { geometry in
@@ -55,50 +68,68 @@ struct ProductListView: View {
         } action: { _, offset in
             recorder.scrolled(screen: .productList, offset: offset)
         }
-        .safeAreaInset(edge: .top) { header }
+        .safeAreaInset(edge: .top, spacing: 0) { header }
         .onAppear { recorder.screenAppeared(.productList) }
         .onDisappear { recorder.screenDisappeared(.productList) }
     }
 
     private var header: some View {
-        Text("Shop")
-            .font(.title2.weight(.semibold))
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Shop")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(Shop.ink)
+                Spacer()
+                Text("\(Product.catalogue.count) items")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Shop.inkSecondary)
+            }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(.regularMaterial)
+            .padding(.top, SafeAreaProbe.top + 6)
+            .padding(.bottom, 12)
+            Divider().overlay(Shop.hairline)
+        }
+        .background(Shop.background)
     }
 
     private func row(_ product: Product) -> some View {
         HStack(spacing: 14) {
-            Image(systemName: product.symbol)
-                .font(.system(size: 30))
-                .frame(width: 78, height: 78)
-                .background(Color(white: 0.93), in: RoundedRectangle(cornerRadius: 12))
-                .foregroundStyle(.secondary)
+            ProductImage(symbol: product.symbol, size: 40)
+                .frame(width: 84, height: 84)
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(product.name)
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Shop.ink)
+                    .lineLimit(1)
                 Text(product.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Shop.inkSecondary)
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
-                    Text(product.formattedPrice).font(.callout.weight(.semibold))
-                    Text(String(format: "%.1f ★ (%d)", product.rating, product.reviewCount))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    Text(product.formattedPrice)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Shop.ink)
+                    RatingLine(rating: product.rating, count: product.reviewCount, compact: true)
                 }
             }
             Spacer(minLength: 0)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Shop.inkTertiary)
         }
         .padding(12)
-        .frame(minHeight: 102)
-        .background(.white, in: RoundedRectangle(cornerRadius: 14))
+        .frame(minHeight: 108)
+        .background(Shop.surface, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14).stroke(Shop.hairline, lineWidth: 1)
+        )
     }
 }
+
+// MARK: - Detail
 
 struct ProductDetailView: View {
     let product: Product
@@ -106,24 +137,29 @@ struct ProductDetailView: View {
     let onBack: () -> Void
 
     @State private var appearedAt = SessionClock.now
+    @State private var added = false
 
-    /// Minimum height for a measurable region, in points. Roughly 23 mm on this display,
-    /// which is twice the gaze error, and therefore the smallest region two of which can
-    /// be reliably told apart.
-    private let regionHeight: CGFloat = 140
+    /// Minimum height for a measurable region, in points. About 23 mm on this display,
+    /// twice the measured gaze error, and therefore the smallest region two of which can
+    /// reliably be told apart.
+    private let regionHeight: CGFloat = 132
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 0) {
                 image
-                title
-                price
-                rating
-                reviews
-                description
+                block { title }
+                separator
+                block { price }
+                separator
+                block { rating }
+                separator
+                block { reviews }
+                separator
+                block { details }
                 callToAction
             }
-            .padding(18)
+            .padding(.bottom, SafeAreaProbe.bottom + 24)
         }
         .scrollIndicators(.hidden)
         .onScrollGeometryChange(for: Double.self) { geometry in
@@ -131,9 +167,10 @@ struct ProductDetailView: View {
         } action: { _, offset in
             recorder.scrolled(screen: .productDetail, offset: offset, productID: product.id)
         }
-        .safeAreaInset(edge: .top) { header }
+        .safeAreaInset(edge: .top, spacing: 0) { header }
         .onAppear {
             appearedAt = SessionClock.now
+            added = false
             recorder.screenAppeared(.productDetail, productID: product.id)
         }
         .onDisappear { recorder.screenDisappeared(.productDetail, productID: product.id) }
@@ -143,81 +180,118 @@ struct ProductDetailView: View {
         }
     }
 
+    private func block<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+    }
+
+    private var separator: some View {
+        Divider().overlay(Shop.hairline).padding(.leading, 18)
+    }
+
     private var header: some View {
-        HStack {
-            Button(action: onBack) {
-                Label("Back", systemImage: "chevron.left")
-                    .font(.callout)
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Button(action: onBack) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
+                        Text("Shop").font(.system(size: 16))
+                    }
+                    .foregroundStyle(Shop.action)
                     .padding(.vertical, 10)
                     .padding(.horizontal, 12)
+                    .contentShape(Rectangle())
+                }
+                .areaOfInterest(.backButton, on: .productDetail, productID: product.id)
+                Spacer()
             }
-            .areaOfInterest(.backButton, on: .productDetail, productID: product.id)
-            Spacer()
+            .padding(.horizontal, 4)
+            .padding(.top, SafeAreaProbe.top)
+            Divider().overlay(Shop.hairline)
         }
-        .padding(.horizontal, 6)
-        .background(.regularMaterial)
+        .background(Shop.background)
     }
 
     private var image: some View {
-        Image(systemName: product.symbol)
-            .font(.system(size: 64))
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 180)
-            .background(Color(white: 0.93), in: RoundedRectangle(cornerRadius: 16))
-            .areaOfInterest(.productImage, on: .productDetail, productID: product.id)
+        ZStack {
+            Shop.imageWell
+            Image(systemName: product.symbol)
+                .font(.system(size: 76, weight: .light))
+                .foregroundStyle(Shop.inkSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 208)
+        .areaOfInterest(.productImage, on: .productDetail, productID: product.id)
     }
 
     private var title: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(product.name).font(.title3.weight(.semibold))
-            Text(product.summary).font(.subheadline).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 7) {
+            Text(product.name)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Shop.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(product.summary)
+                .font(.system(size: 15))
+                .foregroundStyle(Shop.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
         .areaOfInterest(.title, on: .productDetail, productID: product.id)
     }
 
     private var price: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(product.formattedPrice).font(.system(size: 34, weight: .semibold))
-            Text("Includes VAT. Free delivery.").font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 5) {
+            Text(product.formattedPrice)
+                .font(.system(size: 32, weight: .bold))
+                .foregroundStyle(Shop.ink)
+            Text("Includes VAT · Free delivery")
+                .font(.system(size: 13))
+                .foregroundStyle(Shop.inkSecondary)
         }
-        .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
         .areaOfInterest(.price, on: .productDetail, productID: product.id)
     }
 
     private var rating: some View {
-        HStack(spacing: 10) {
-            Text(String(format: "%.1f", product.rating)).font(.title3.weight(.semibold))
-            HStack(spacing: 3) {
-                ForEach(0..<5, id: \.self) { index in
-                    Image(systemName: Double(index) < product.rating ? "star.fill" : "star")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                }
-            }
-            Spacer()
+        VStack(alignment: .leading, spacing: 7) {
+            RatingLine(rating: product.rating, count: product.reviewCount, compact: false)
+            Text("Based on verified purchases")
+                .font(.system(size: 13))
+                .foregroundStyle(Shop.inkSecondary)
         }
-        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
         .areaOfInterest(.rating, on: .productDetail, productID: product.id)
     }
 
     private var reviews: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("\(product.reviewCount) reviews").font(.callout.weight(.medium))
-            Text("\"Arrived quickly and does exactly what it says. The build feels solid for the money.\"")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Text("Verified buyer").font(.caption2).foregroundStyle(.tertiary)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Reviews")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Shop.ink)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("“Arrived quickly and does exactly what it says. The build feels solid for the money.”")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Shop.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Verified buyer")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Shop.inkTertiary)
+            }
         }
         .frame(maxWidth: .infinity, minHeight: regionHeight, alignment: .topLeading)
         .areaOfInterest(.reviews, on: .productDetail, productID: product.id)
     }
 
-    private var description: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Details").font(.callout.weight(.medium))
-            Text(product.details).font(.footnote).foregroundStyle(.secondary)
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Details")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Shop.ink)
+            Text(product.details)
+                .font(.system(size: 14))
+                .foregroundStyle(Shop.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, minHeight: regionHeight, alignment: .topLeading)
         .areaOfInterest(.description, on: .productDetail, productID: product.id)
@@ -225,15 +299,77 @@ struct ProductDetailView: View {
 
     private var callToAction: some View {
         Button {
+            added = true
             recorder.productSelected(product.id, on: .productDetail)
         } label: {
-            Text("Add to basket")
-                .font(.headline)
+            Text(added ? "Added to basket" : "Add to basket")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
+                .padding(.vertical, 17)
+                .background(added ? Shop.inkSecondary : Shop.action, in: RoundedRectangle(cornerRadius: 13))
         }
-        .buttonStyle(.borderedProminent)
-        .frame(minHeight: 96)
+        .buttonStyle(CardButtonStyle())
+        .padding(.horizontal, 18)
+        .padding(.top, 18)
+        .frame(minHeight: 104, alignment: .top)
         .areaOfInterest(.cta, on: .productDetail, productID: product.id)
+    }
+}
+
+// MARK: - Pieces
+
+/// Stands in for product photography.
+///
+/// A flat neutral panel rather than a picture, so that no product is more visually
+/// arresting than another. Photograph quality varying between items would be a variable in
+/// a study about where people look.
+private struct ProductImage: View {
+    let symbol: String
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14).fill(Shop.imageWell)
+            Image(systemName: symbol)
+                .font(.system(size: size, weight: .light))
+                .foregroundStyle(Shop.inkSecondary)
+        }
+    }
+}
+
+private struct RatingLine: View {
+    let rating: Double
+    let count: Int
+    let compact: Bool
+
+    var body: some View {
+        HStack(spacing: compact ? 5 : 8) {
+            if !compact {
+                Text(String(format: "%.1f", rating))
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Shop.ink)
+            }
+            HStack(spacing: 2) {
+                ForEach(0..<5, id: \.self) { index in
+                    Image(systemName: Double(index) + 0.5 < rating ? "star.fill" : "star")
+                        .font(.system(size: compact ? 10 : 13))
+                        .foregroundStyle(Shop.star)
+                }
+            }
+            .fixedSize()
+            Text(compact ? "(\(count))" : "\(count) reviews")
+                .font(.system(size: compact ? 12 : 14))
+                .foregroundStyle(Shop.inkSecondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+}
+
+/// A press that dims rather than scales. Motion would draw the eye to whatever was tapped.
+private struct CardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.72 : 1)
     }
 }

@@ -59,6 +59,9 @@ public struct StudySessionView: View {
 
                 banner
             }
+            // The stimulus is pinned to the light appearance, so the app-wide dark scheme
+            // used by the instrument screens must not leak into it.
+            .preferredColorScheme(.light)
             .onAppear {
                 viewport = proxy.size
                 startSession(viewport: proxy.size)
@@ -71,25 +74,31 @@ public struct StudySessionView: View {
 
     // MARK: Recording banner
 
+    /// Sits over the stimulus rather than inside it, so the shop's own layout is exactly
+    /// what a participant would see without any recording apparatus attached.
     private var banner: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 9) {
             Circle()
                 .fill(tracking.quality.isConfident ? Color.green : Color.orange)
                 .frame(width: 7, height: 7)
             Text(tracking.quality.isConfident ? "Recording" : tracking.quality.guidance)
-                .font(.caption2.weight(.medium))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Shop.ink)
             Text("\(recorder.eventCount)")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-            Spacer()
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(Shop.inkSecondary)
+            Divider().frame(height: 14)
             Button("Finish") { finish() }
-                .font(.caption.weight(.medium))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Shop.action)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 7)
-        .background(.thinMaterial, in: Capsule())
-        .padding(.top, 4)
-        .allowsHitTesting(true)
+        .padding(.vertical, 9)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().stroke(Shop.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.10), radius: 10, y: 3)
+        .padding(.top, 8)
+        .environment(\.colorScheme, .light)
     }
 
     // MARK: Lifecycle

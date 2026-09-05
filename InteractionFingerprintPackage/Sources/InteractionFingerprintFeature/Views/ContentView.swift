@@ -42,9 +42,25 @@ public struct ContentView: View {
         }
     }
 
+    /// Opens straight into the stimulus, without a device or a calibration.
+    ///
+    /// The study screens cannot otherwise be seen anywhere but on a Face ID iPhone mid
+    /// session, which makes reviewing their appearance far harder than it should be. Pass
+    /// `-stimulusPreview` as a launch argument.
+    private var isStimulusPreview: Bool {
+        ProcessInfo.processInfo.arguments.contains("-stimulusPreview")
+    }
+
     @ViewBuilder
     private var content: some View {
-        if isRunningStudy {
+        if isStimulusPreview {
+            ShopView(
+                recorder: EventRecorder(),
+                startOn: ProcessInfo.processInfo.arguments.contains("-detail")
+                    ? Product.catalogue.first
+                    : nil
+            )
+        } else if isRunningStudy {
             StudySessionView(tracking: tracking) { export in
                 isRunningStudy = false
                 if let export { lastExport = export }
