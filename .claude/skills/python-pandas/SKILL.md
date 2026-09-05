@@ -15,6 +15,16 @@ pip freeze > requirements.txt
 
 Commit `requirements.txt`. Never commit `.venv/` or anything under `Data/`.
 
+## What exists
+
+`Analysis/evaluate_gaze.py` judges a calibration and sessions offline: axis check, gain
+table per gaze source, grid CV, and gaze-before-tap error. `Analysis/fingerprint/` holds the
+loaders, the display geometry and the head-plus-eye gaze model, mirroring the app's Swift.
+Start there before writing new analysis; see `Analysis/README.md`.
+
+**The judge is gaze-before-tap error on free-viewing sessions, not grid accuracy.** The
+grid has been wrong about free viewing every time the two disagreed.
+
 ## Layout
 
 ```text
