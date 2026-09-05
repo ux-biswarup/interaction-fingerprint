@@ -148,8 +148,9 @@ and generative interfaces.
 > frames showed that ARKit's camera axes were rotated relative to what the geometry
 > assumed, that the eye-in-head rotation arrives at about a fifth of its true size, and
 > that grid accuracy does not predict free viewing: measured against 43 taps as ground
-> truth, the best model structure sits at about 225 points, and the sensor's free-viewing
-> floor for this participant is currently 2° to 3°. The grid numbers below stand as what
+> truth, the best model structure sits at about 225 points, 3.7 cm, and the sensor's
+> free-viewing floor for this participant is currently 4° to 6°, worse than the published
+> 3.18°. The grid numbers below stand as what
 > they are; they are not the accuracy of the study data.
 
 iPhone 15, iOS 26.5.2, held in the hand, accuracy measured as the offset of each target's

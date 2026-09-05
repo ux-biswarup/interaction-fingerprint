@@ -493,7 +493,8 @@ screen is understood as what it is: performance on the grid, under the grid's co
 Calibrating from the taps themselves, leaving one tap out, reaches a median of **164 pt**.
 Better than the grid transfer, and the mechanism the product path in section 10 depends on,
 but it says the free-viewing floor of this sensor for this participant is currently around
-2° to 3°, not the 1.4° the grid reports.
+4° to 6° (164 pt is 2.7 cm, 225 pt is 3.7 cm, at about 35 cm), not the 1.4° the grid
+reports, and worse than the published 3.18° for ARKit gaze.
 
 ## 12. Seeing what the system sees
 
