@@ -1,21 +1,21 @@
 import ARKit
+import CoreGraphics
 import Foundation
 import Observation
 import simd
 
 /// Runs `ARFaceTrackingConfiguration` and turns each frame into a `FaceSample`.
 ///
-/// This is a deliberately thin wrapper. It starts a headless `ARSession`, reads the
-/// `ARFaceAnchor`, projects the gaze estimate into viewport coordinates and publishes
-/// the result. It stores nothing; persistence arrives with the storage milestone.
+/// Gaze is computed by casting a ray from the midpoint of the eyes through ARKit's
+/// convergence estimate and intersecting it with the plane of the display. A fitted
+/// `GazeCalibration` then maps that physical intersection to screen coordinates.
 ///
-/// Threading: `ARSession` delivers frames on `delegateQueue`, which is pinned to the
-/// main queue here, so all published state is main-actor isolated and safe to read
-/// directly from SwiftUI.
+/// Threading: `ARSession` delivers frames on `delegateQueue`, pinned here to the main
+/// queue, so all published state is main-actor isolated and safe to read from SwiftUI.
 ///
-/// Note on accuracy: `lookAtPoint` is an eye-convergence estimate derived from the
-/// face model, not a pupil tracker. Expect a few centimetres of error. Areas of
-/// interest must be sized accordingly. See `.claude/skills/eye-tracking-concepts`.
+/// Accuracy: this is an eye-convergence estimate from a face model, not a pupil tracker.
+/// Even calibrated, expect error of a centimetre or more. Areas of interest must be
+/// sized accordingly. See `.claude/skills/eye-tracking-concepts`.
 @MainActor
 @Observable
 public final class FaceTrackingSession {
@@ -30,46 +30,44 @@ public final class FaceTrackingSession {
 
     public private(set) var state: State = .idle
 
-    /// The most recent frame's measurements, raw and unsmoothed.
+    /// The most recent frame's measurements, unfiltered.
     public private(set) var latest: FaceSample?
 
-    /// Total frames received since the session started.
-    public private(set) var frameCount: Int = 0
+    /// Smoothed, calibrated gaze for drawing only, normalised 0...1. Nil while the face
+    /// is untracked or the eyes are closed.
+    public private(set) var displayGaze: CGPoint?
 
-    /// Frames in which ARKit reported the face as tracked.
+    public private(set) var frameCount: Int = 0
     public private(set) var trackedFrameCount: Int = 0
 
     /// Measured delivery rate, refreshed about once a second. Expect roughly 60.
     public private(set) var measuredHz: Double = 0
-
-    /// Smoothed gaze for display only. The dot is jittery without this; the recorded
-    /// `latest.gazeX/gazeY` stay raw so analysis is not silently filtered.
-    public private(set) var smoothedGaze: CGPoint?
 
     /// Share of frames since start where the face was tracked, 0...1.
     public var trackedShare: Double {
         frameCount == 0 ? 0 : Double(trackedFrameCount) / Double(frameCount)
     }
 
-    // MARK: Tuning
+    // MARK: Configuration
 
-    /// The front camera image is mirrored relative to what the user sees. Whether the
-    /// projection needs flipping is easiest to confirm by looking at the debug dot on a
-    /// real device, so this is exposed as a toggle rather than hard-coded.
-    public var mirrorHorizontally: Bool = false
+    /// Fitted mapping from screen-plane metres to normalised screen coordinates. When
+    /// nil, the uncalibrated geometric fallback is used and samples are flagged as such.
+    public var calibration: GazeCalibration?
 
-    /// Display smoothing strength, 0 = no smoothing, approaching 1 = very heavy.
-    public var smoothingFactor: Double = 0.75
+    /// Physical display geometry, supplied by the view.
+    public private(set) var screenGeometry: ScreenGeometry?
 
     // MARK: Private
 
     private let session = ARSession()
     private let proxy = ARSessionProxy()
-    private var viewportSize: CGSize = .zero
+    private var horizontalFilter = OneEuroFilter()
+    private var verticalFilter = OneEuroFilter()
     private var hzWindowStart: TimeInterval = 0
     private var hzWindowFrames: Int = 0
 
-    public init() {
+    public init(calibration: GazeCalibration? = GazeCalibrationStore.load()) {
+        self.calibration = calibration
         proxy.onFrame = { [weak self] frame in self?.handle(frame) }
         proxy.onFailure = { [weak self] error in
             self?.state = .failed(error.localizedDescription)
@@ -80,10 +78,12 @@ public final class FaceTrackingSession {
 
     // MARK: Control
 
-    /// Viewport in points, supplied by the view. Projection needs it, and reading it
-    /// from the view avoids the deprecated `UIScreen.main`.
-    public func updateViewport(_ size: CGSize) {
-        viewportSize = size
+    /// Supplied by the view. Reading the size and scale from the view avoids the
+    /// deprecated `UIScreen.main` and keeps the geometry correct on any device.
+    public func updateGeometry(pointSize: CGSize, displayScale: Double) {
+        guard pointSize.width > 0, pointSize.height > 0 else { return }
+        let updated = ScreenGeometry(pointSize: pointSize, displayScale: displayScale)
+        if updated != screenGeometry { screenGeometry = updated }
     }
 
     public func start() {
@@ -98,8 +98,10 @@ public final class FaceTrackingSession {
         hzWindowFrames = 0
         hzWindowStart = 0
         measuredHz = 0
-        smoothedGaze = nil
+        displayGaze = nil
         latest = nil
+        horizontalFilter.reset()
+        verticalFilter.reset()
 
         let configuration = ARFaceTrackingConfiguration()
         configuration.maximumNumberOfTrackedFaces = 1
@@ -122,77 +124,69 @@ public final class FaceTrackingSession {
         frameCount += 1
         updateRate(with: frame.timestamp)
 
-        guard let anchor = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first else {
+        guard
+            let anchor = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first,
+            anchor.isTracked
+        else {
             latest = FaceSample(
                 timestamp: frame.timestamp,
                 isTracked: false,
-                gazeX: nil,
-                gazeY: nil,
+                eyesOpen: false,
+                rawGazeX: nil, rawGazeY: nil,
+                gazeX: nil, gazeY: nil,
+                isCalibrated: calibration != nil,
                 signals: [:],
                 head: nil
             )
-            return
-        }
-
-        guard anchor.isTracked else {
-            latest = FaceSample(
-                timestamp: frame.timestamp,
-                isTracked: false,
-                gazeX: nil,
-                gazeY: nil,
-                signals: Self.signals(from: anchor),
-                head: nil
-            )
+            displayGaze = nil
             return
         }
 
         trackedFrameCount += 1
 
-        let gaze = projectGaze(anchor: anchor, camera: frame.camera)
+        let signals = Self.signals(from: anchor)
+        let eyesOpen = TrackedBlendShapes.eyesOpen(in: signals)
+
+        let faceInCamera = simd_mul(simd_inverse(frame.camera.transform), anchor.transform)
+        let raw = GazeRay.ray(
+            faceInCamera: faceInCamera,
+            leftEye: anchor.leftEyeTransform,
+            rightEye: anchor.rightEyeTransform,
+            lookAtPoint: anchor.lookAtPoint
+        ).flatMap(GazeRay.intersectScreenPlane)
+
+        let normalised = raw.map(mapToScreen)
 
         latest = FaceSample(
             timestamp: frame.timestamp,
             isTracked: true,
-            gazeX: gaze.map { Double($0.x) },
-            gazeY: gaze.map { Double($0.y) },
-            signals: Self.signals(from: anchor),
+            eyesOpen: eyesOpen,
+            rawGazeX: raw.map { Double($0.x) },
+            rawGazeY: raw.map { Double($0.y) },
+            gazeX: normalised.map { Double($0.x) },
+            gazeY: normalised.map { Double($0.y) },
+            isCalibrated: calibration != nil,
+            signals: signals,
             head: Self.headPose(from: anchor.transform)
         )
 
-        if let gaze {
-            smoothedGaze = smooth(gaze)
+        // A blink would otherwise drag the drawn dot across the screen and back.
+        guard eyesOpen, let normalised else {
+            return
         }
+
+        displayGaze = CGPoint(
+            x: horizontalFilter.filter(Double(normalised.x), timestamp: frame.timestamp),
+            y: verticalFilter.filter(Double(normalised.y), timestamp: frame.timestamp)
+        )
     }
 
-    /// Projects the eye convergence point onto the viewport and normalises it to 0...1.
-    private func projectGaze(anchor: ARFaceAnchor, camera: ARCamera) -> CGPoint? {
-        guard viewportSize.width > 0, viewportSize.height > 0 else { return nil }
-
-        // lookAtPoint is in face-anchor space; lift it into world space.
-        let world = anchor.transform * SIMD4<Float>(anchor.lookAtPoint, 1)
-
-        let projected = camera.projectPoint(
-            SIMD3<Float>(world.x, world.y, world.z),
-            orientation: .portrait,
-            viewportSize: viewportSize
-        )
-
-        guard projected.x.isFinite, projected.y.isFinite else { return nil }
-
-        var normalisedX = projected.x / viewportSize.width
-        let normalisedY = projected.y / viewportSize.height
-        if mirrorHorizontally { normalisedX = 1 - normalisedX }
-
-        return CGPoint(x: normalisedX, y: normalisedY)
-    }
-
-    private func smooth(_ point: CGPoint) -> CGPoint {
-        guard let previous = smoothedGaze else { return point }
-        let a = smoothingFactor
-        return CGPoint(
-            x: previous.x * a + point.x * (1 - a),
-            y: previous.y * a + point.y * (1 - a)
-        )
+    /// Calibrated when a fit exists, otherwise the geometric estimate.
+    private func mapToScreen(_ raw: CGPoint) -> CGPoint {
+        if let calibration {
+            return calibration.apply(to: raw)
+        }
+        return screenGeometry?.normalise(metres: raw) ?? .zero
     }
 
     private func updateRate(with timestamp: TimeInterval) {
@@ -225,8 +219,7 @@ public final class FaceTrackingSession {
 
     private static func headPose(from transform: simd_float4x4) -> HeadPose {
         let translation = transform.columns.3
-        let quaternion = simd_quatf(transform)
-        let angles = eulerAngles(from: quaternion)
+        let angles = eulerAngles(from: simd_quatf(transform))
         return HeadPose(
             x: Double(translation.x),
             y: Double(translation.y),
@@ -237,23 +230,19 @@ public final class FaceTrackingSession {
         )
     }
 
-    /// Standard quaternion to intrinsic Euler conversion. `pitch`, `yaw` and `roll`
-    /// are rotations about the anchor's x, y and z axes.
+    /// Standard quaternion to intrinsic Euler conversion. `pitch`, `yaw` and `roll` are
+    /// rotations about the anchor's x, y and z axes.
     private static func eulerAngles(from q: simd_quatf) -> (pitch: Float, yaw: Float, roll: Float) {
         let w = q.real, x = q.imag.x, y = q.imag.y, z = q.imag.z
 
-        let sinPitch = 2 * (w * x + y * z)
-        let cosPitch = 1 - 2 * (x * x + y * y)
-        let pitch = atan2(sinPitch, cosPitch)
+        let pitch = atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
 
         let sinYaw = 2 * (w * y - z * x)
         let yaw = abs(sinYaw) >= 1
             ? Float(copysign(Double.pi / 2, Double(sinYaw)))
             : asin(sinYaw)
 
-        let sinRoll = 2 * (w * z + x * y)
-        let cosRoll = 1 - 2 * (y * y + z * z)
-        let roll = atan2(sinRoll, cosRoll)
+        let roll = atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
 
         return (pitch, yaw, roll)
     }
@@ -261,9 +250,9 @@ public final class FaceTrackingSession {
 
 /// Keeps `ARSessionDelegate` conformance off the observable class.
 ///
-/// `@preconcurrency` is required because `ARSessionDelegate` carries no isolation,
-/// while this proxy is main-actor isolated. That pairing is sound only because
-/// `delegateQueue` is pinned to the main queue in `FaceTrackingSession.init`.
+/// `@preconcurrency` is required because `ARSessionDelegate` carries no isolation while
+/// this proxy is main-actor isolated. That pairing is sound only because `delegateQueue`
+/// is pinned to the main queue in `FaceTrackingSession.init`.
 @MainActor
 private final class ARSessionProxy: NSObject, @preconcurrency ARSessionDelegate {
     var onFrame: ((ARFrame) -> Void)?

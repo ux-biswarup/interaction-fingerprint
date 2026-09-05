@@ -26,4 +26,17 @@ public enum TrackedBlendShapes {
     ///     eyeWide_L     eyeWide_R
     ///     browInnerUp   browOuterUp_L   browOuterUp_R
     public static let keys: [String] = all.map(\.rawValue)
+
+    /// Above this value on either eye, that eye counts as closed.
+    public static let blinkThreshold = 0.5
+
+    /// Gaze during a blink is meaningless: the eye model has nothing to work from, and
+    /// the estimate swings wildly. Samples are still recorded so blink rate stays
+    /// measurable, but they are flagged so analysis can drop them before detecting
+    /// fixations. See `.claude/skills/eye-tracking-concepts`.
+    public static func eyesOpen(in signals: [String: Double], threshold: Double = blinkThreshold) -> Bool {
+        let left = signals[ARFaceAnchor.BlendShapeLocation.eyeBlinkLeft.rawValue] ?? 0
+        let right = signals[ARFaceAnchor.BlendShapeLocation.eyeBlinkRight.rawValue] ?? 0
+        return left < threshold && right < threshold
+    }
 }
