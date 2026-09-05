@@ -19,10 +19,11 @@ public enum GazeSource: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// Whether the fit must show a positive gain along each axis. True for the ARKit
-    /// sources, whose sign convention is known. The pupil offset's sign depends on the
-    /// camera image and is left to the fit until it has been established from data.
-    var requiresPositiveGain: Bool { self != .pupil }
+    /// Whether the fit must show a positive gain along each axis. An eye that turns right
+    /// must map right. The pupil source's sign convention was established from the first
+    /// calibration that used it, 6 September 2026: gains of +2.5 horizontal and +16
+    /// vertical, so it is held to the same rule as the ARKit sources.
+    var requiresPositiveGain: Bool { true }
 }
 
 /// Shape of the correction.

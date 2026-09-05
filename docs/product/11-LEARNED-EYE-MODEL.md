@@ -81,10 +81,44 @@ hold: eye crops may be processed on device for inference; if any are stored for
 fine-tuning they are small, local, consented separately, never committed, and deleted after
 the model is fitted. The exported dataset stays what it is: numbers, not pictures.
 
+## 2c. Result of the pupil landmark experiment, 6 September 2026
+
+One calibration and one 16-tap session on the build with `PupilDetector`. The fitter chose
+the pupil source on its own. Measured with the same gain table as `10-MOTION-FUSION.md` §14:
+
+| Readout | Horizontal gain (near / far) | Horizontal r | Vertical gain | Vertical r |
+| --- | --- | --- | --- | --- |
+| ARKit eye transforms | 0.21 / 0.27 | 0.50 / 0.86 | 0.24 / 0.22 | 0.30 / 0.82 |
+| ARKit eye-direction blend shapes | 0.33 / 0.45 | 0.53 / 0.87 | 0.39 / 0.36 | 0.28 / 0.82 |
+| **Vision pupil landmarks** | **0.38 / 0.37** | **0.90 / 0.85** | 0.03 / 0.05 | 0.78 / 0.72 |
+
+Judged against the taps, fitting on the calibration and replaying on the session:
+
+| Eye-in-head input | Grid CV | Gaze-before-tap | On the display |
+| --- | --- | --- | --- |
+| Pupil landmarks (shipped) | 90 pt | **199 pt** | 87% |
+| ARKit transforms | 168 pt | 281 pt | 91% |
+| Blend shapes | 161 pt | 263 pt | 92% |
+| Pupil horizontal, blend shapes vertical | 153 pt | 217 pt | 95% |
+| All six readouts, ridge | 91 to 103 pt | 193 to 221 pt | 88 to 90% |
+
+Three conclusions. The pupil landmarks are the best horizontal readout available, with the
+most consistent gain across distances, and they are close to blind vertically, because the
+pupil barely moves against an opening whose height is set by the eyelids. Fusing readouts
+does not help beyond the noise of sixteen taps. And 199 points is 3.3 cm, about 5°: better
+than anything before it in free viewing, and not the 2 cm the study needs. The pupil source
+stays as the shipped estimate. Milestone 2 starts.
+
+A complication for milestone 2, found while planning it: GazeCapture has no head pose. Its
+labels are screen points and face boxes. Deriving an eye-in-head label therefore needs a
+head pose estimated from each frame by a separate face-mesh fitter, run over the dataset
+once, offline. If that estimate is too coarse, the fallback is the published approach: train
+the network end to end on the screen point and treat its output as one more gaze source for
+the calibration to correct, which keeps everything else in this plan intact.
+
 ## 3. Milestones
 
-1. **Pupil landmark result.** One recalibration and one session on the pupil build; the
-   gain table from §14 extended with the new source. Decides whether 2b starts.
+1. **Pupil landmark result.** Done, §2c above. 2b starts.
 2. **Data pipeline.** GazeCapture licence, download, derivation of eye-in-head labels,
    eye-crop extraction matching what the phone will produce. Validate the label derivation
    on our own calibration frames, where the truth is known.

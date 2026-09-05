@@ -559,7 +559,9 @@ ruled out. The plan is in `11-LEARNED-EYE-MODEL.md`: first, the pupil's position
 eye opening from Vision's face landmarks, now recorded on every frame and offered to the
 fitter as a third gaze source, measured with the same gain table as §14; then, if that is
 not enough, a small convolutional model for the eye-in-head angle with everything else in
-this document kept as it is.
+this document kept as it is. The pupil result is in `11-LEARNED-EYE-MODEL.md` §2c: the best
+horizontal readout so far, blind vertically, 199 points against taps in free viewing. Not
+enough; the learned model goes ahead.
 
 ## 13. What this does not claim
 

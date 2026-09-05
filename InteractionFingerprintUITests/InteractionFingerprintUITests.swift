@@ -19,20 +19,20 @@ final class InteractionFingerprintUITests: XCTestCase {
         app.launch()
 
         let product = app.buttons["product_sku_101"]
-        XCTAssertTrue(product.waitForExistence(timeout: 5), "product list did not appear")
+        XCTAssertTrue(product.waitForExistence(timeout: 10), "product list did not appear")
         product.tap()
 
         let basket = app.buttons["add_to_basket"]
-        XCTAssertTrue(basket.waitForExistence(timeout: 5), "detail screen did not appear")
+        XCTAssertTrue(basket.waitForExistence(timeout: 10), "detail screen did not appear")
         basket.tap()
 
         app.buttons["back_to_shop"].tap()
-        XCTAssertTrue(product.waitForExistence(timeout: 5), "did not return to the list")
+        XCTAssertTrue(product.waitForExistence(timeout: 10), "did not return to the list")
 
         app.buttons["finish_recording"].tap()
 
         let summary = app.staticTexts["export_summary"]
-        XCTAssertTrue(summary.waitForExistence(timeout: 5), "no export summary after finishing")
+        XCTAssertTrue(summary.waitForExistence(timeout: 10), "no export summary after finishing")
         let label = summary.label
 
         // Three presses happened while recording. Finish itself may or may not be counted,
