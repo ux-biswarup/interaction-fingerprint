@@ -6,16 +6,14 @@ import simd
 
 /// Runs `ARFaceTrackingConfiguration` and turns each frame into a `FaceSample`.
 ///
-/// Gaze is computed by casting a ray from the midpoint of the eyes through ARKit's
-/// convergence estimate and intersecting it with the plane of the display. A fitted
-/// `GazeCalibration` then maps that physical intersection to screen coordinates.
+/// Gaze is measured as an **angle** and only becomes a screen position at the last step,
+/// by projecting from the eye position measured on that same frame. That ordering is what
+/// keeps the mapping valid when the phone moves: a person's dominant gaze error is a fixed
+/// angular offset, and an angle reaches the screen scaled by however far away the phone
+/// happens to be.
 ///
 /// Threading: `ARSession` delivers frames on `delegateQueue`, pinned here to the main
 /// queue, so all published state is main-actor isolated and safe to read from SwiftUI.
-///
-/// Accuracy: this is an eye-convergence estimate from a face model, not a pupil tracker.
-/// Even calibrated, expect error of a centimetre or more. Areas of interest must be
-/// sized accordingly. See `.claude/skills/eye-tracking-concepts`.
 @MainActor
 @Observable
 public final class FaceTrackingSession {
@@ -29,32 +27,26 @@ public final class FaceTrackingSession {
     // MARK: Published state
 
     public private(set) var state: State = .idle
-
-    /// The most recent frame's measurements, unfiltered.
     public private(set) var latest: FaceSample?
+    public private(set) var quality: GazeQuality = .noFace
 
-    /// Smoothed, calibrated gaze for drawing only, normalised 0...1. Nil while the face
-    /// is untracked or the eyes are closed.
+    /// Smoothed gaze for drawing only, normalised 0...1. Nil when the frame is not usable.
     public private(set) var displayGaze: CGPoint?
 
     public private(set) var frameCount: Int = 0
     public private(set) var trackedFrameCount: Int = 0
-
-    /// Measured delivery rate, refreshed about once a second. Expect roughly 60.
     public private(set) var measuredHz: Double = 0
 
-    /// Share of frames since start where the face was tracked, 0...1.
+    /// Latest raw measurements, for the calibration run to bank.
+    public private(set) var latestCalibrationSample: GazeCalibrationRun.GazeSampleForCalibration?
+
     public var trackedShare: Double {
         frameCount == 0 ? 0 : Double(trackedFrameCount) / Double(frameCount)
     }
 
     // MARK: Configuration
 
-    /// Fitted mapping from screen-plane metres to normalised screen coordinates. When
-    /// nil, the uncalibrated geometric fallback is used and samples are flagged as such.
-    public var calibration: GazeCalibration?
-
-    /// Physical display geometry, supplied by the view.
+    public var model: GazeModel?
     public private(set) var screenGeometry: ScreenGeometry?
 
     // MARK: Private
@@ -66,8 +58,8 @@ public final class FaceTrackingSession {
     private var hzWindowStart: TimeInterval = 0
     private var hzWindowFrames: Int = 0
 
-    public init(calibration: GazeCalibration? = GazeCalibrationStore.load()) {
-        self.calibration = calibration
+    public init(model: GazeModel? = GazeModelStore.load()) {
+        self.model = model
         proxy.onFrame = { [weak self] frame in self?.handle(frame) }
         proxy.onFailure = { [weak self] error in
             self?.state = .failed(error.localizedDescription)
@@ -78,8 +70,8 @@ public final class FaceTrackingSession {
 
     // MARK: Control
 
-    /// Supplied by the view. Reading the size and scale from the view avoids the
-    /// deprecated `UIScreen.main` and keeps the geometry correct on any device.
+    /// Supplied by the view. Reading size and scale from the view avoids the deprecated
+    /// `UIScreen.main` and keeps the geometry right on any device.
     public func updateGeometry(pointSize: CGSize, displayScale: Double) {
         guard pointSize.width > 0, pointSize.height > 0 else { return }
         let updated = ScreenGeometry(pointSize: pointSize, displayScale: displayScale)
@@ -100,6 +92,7 @@ public final class FaceTrackingSession {
         measuredHz = 0
         displayGaze = nil
         latest = nil
+        latestCalibrationSample = nil
         horizontalFilter.reset()
         verticalFilter.reset()
 
@@ -116,6 +109,7 @@ public final class FaceTrackingSession {
         guard state == .running else { return }
         session.pause()
         state = .idle
+        displayGaze = nil
     }
 
     // MARK: Frame handling
@@ -128,16 +122,9 @@ public final class FaceTrackingSession {
             let anchor = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first,
             anchor.isTracked
         else {
-            latest = FaceSample(
-                timestamp: frame.timestamp,
-                isTracked: false,
-                eyesOpen: false,
-                rawGazeX: nil, rawGazeY: nil,
-                gazeX: nil, gazeY: nil,
-                isCalibrated: calibration != nil,
-                signals: [:],
-                head: nil
-            )
+            quality = .noFace
+            latestCalibrationSample = nil
+            latest = untrackedSample(at: frame.timestamp)
             displayGaze = nil
             return
         }
@@ -146,34 +133,67 @@ public final class FaceTrackingSession {
 
         let signals = Self.signals(from: anchor)
         let eyesOpen = TrackedBlendShapes.eyesOpen(in: signals)
-
         let faceInCamera = simd_mul(simd_inverse(frame.camera.transform), anchor.transform)
-        let raw = GazeRay.ray(
+        let head = Self.headPose(from: faceInCamera)
+
+        let convergence = GazeRay.convergenceEstimate(
             faceInCamera: faceInCamera,
             leftEye: anchor.leftEyeTransform,
             rightEye: anchor.rightEyeTransform,
             lookAtPoint: anchor.lookAtPoint
-        ).flatMap(GazeRay.intersectScreenPlane)
+        )
+        let perEye = GazeRay.perEyeEstimate(
+            faceInCamera: faceInCamera,
+            leftEye: anchor.leftEyeTransform,
+            rightEye: anchor.rightEyeTransform,
+            lookAtPoint: anchor.lookAtPoint
+        )
 
-        let normalised = raw.map(mapToScreen)
+        let convergenceMeasurement = convergence.flatMap(GazeMeasurement.init)
+        let perEyeMeasurement = perEye.flatMap(GazeMeasurement.init)
+        let reference = convergenceMeasurement ?? perEyeMeasurement
+
+        quality = GazeQuality.evaluate(
+            isTracked: true,
+            eyesOpen: eyesOpen,
+            distance: reference?.distance,
+            headRotation: head.offAxisRotation,
+            model: model
+        )
+
+        latestCalibrationSample = GazeCalibrationRun.GazeSampleForCalibration(
+            convergence: convergenceMeasurement,
+            perEye: perEyeMeasurement,
+            headYaw: head.yaw,
+            headPitch: head.pitch
+        )
+
+        let normalised = mapToScreen(
+            convergence: convergenceMeasurement,
+            perEye: perEyeMeasurement
+        )
 
         latest = FaceSample(
             timestamp: frame.timestamp,
             isTracked: true,
             eyesOpen: eyesOpen,
-            rawGazeX: raw.map { Double($0.x) },
-            rawGazeY: raw.map { Double($0.y) },
+            quality: Self.qualityCode(quality),
+            eyeX: reference.map(\.eyeX),
+            eyeY: reference.map(\.eyeY),
+            eyeZ: reference.map { -$0.distance },
+            convergenceU: convergenceMeasurement?.u,
+            convergenceV: convergenceMeasurement?.v,
+            perEyeU: perEyeMeasurement?.u,
+            perEyeV: perEyeMeasurement?.v,
             gazeX: normalised.map { Double($0.x) },
             gazeY: normalised.map { Double($0.y) },
-            isCalibrated: calibration != nil,
+            isCalibrated: model != nil,
             signals: signals,
-            head: Self.headPose(from: anchor.transform)
+            head: head
         )
 
         // A blink would otherwise drag the drawn dot across the screen and back.
-        guard eyesOpen, let normalised else {
-            return
-        }
+        guard quality.isUsable, let normalised else { return }
 
         displayGaze = CGPoint(
             x: horizontalFilter.filter(Double(normalised.x), timestamp: frame.timestamp),
@@ -181,12 +201,42 @@ public final class FaceTrackingSession {
         )
     }
 
-    /// Calibrated when a fit exists, otherwise the geometric estimate.
-    private func mapToScreen(_ raw: CGPoint) -> CGPoint {
-        if let calibration {
-            return calibration.apply(to: raw)
+    private func untrackedSample(at timestamp: TimeInterval) -> FaceSample {
+        FaceSample(
+            timestamp: timestamp,
+            isTracked: false,
+            eyesOpen: false,
+            quality: Self.qualityCode(.noFace),
+            eyeX: nil, eyeY: nil, eyeZ: nil,
+            convergenceU: nil, convergenceV: nil,
+            perEyeU: nil, perEyeV: nil,
+            gazeX: nil, gazeY: nil,
+            isCalibrated: model != nil,
+            signals: [:],
+            head: nil
+        )
+    }
+
+    /// Applies the fitted angular correction, then projects using this frame's eye
+    /// position. Falls back to the uncorrected geometry when nothing has been fitted.
+    private func mapToScreen(
+        convergence: GazeMeasurement?,
+        perEye: GazeMeasurement?
+    ) -> CGPoint? {
+        guard let geometry = screenGeometry else { return nil }
+
+        if let model {
+            let measurement = model.source == .perEye ? perEye : convergence
+            guard let measurement else { return nil }
+            return geometry.normalised(fromCameraMetres: model.screenPlaneHit(for: measurement))
         }
-        return screenGeometry?.normalise(metres: raw) ?? .zero
+
+        guard let measurement = convergence ?? perEye else { return nil }
+        let hit = CGPoint(
+            x: measurement.eyeX + measurement.distance * measurement.u,
+            y: measurement.eyeY + measurement.distance * measurement.v
+        )
+        return geometry.normalised(fromCameraMetres: hit)
     }
 
     private func updateRate(with timestamp: TimeInterval) {
@@ -205,6 +255,19 @@ public final class FaceTrackingSession {
     }
 
     // MARK: Conversion helpers
+
+    static func qualityCode(_ quality: GazeQuality) -> String {
+        switch quality {
+        case .good: "good"
+        case .noFace: "no_face"
+        case .blinking: "blink"
+        case .tooClose: "too_close"
+        case .tooFar: "too_far"
+        case .headTurned: "head_turned"
+        case .notCalibrated: "not_calibrated"
+        case .outsideCalibratedRange: "outside_calibrated_range"
+        }
+    }
 
     private static func signals(from anchor: ARFaceAnchor) -> [String: Double] {
         var result: [String: Double] = [:]
@@ -230,20 +293,15 @@ public final class FaceTrackingSession {
         )
     }
 
-    /// Standard quaternion to intrinsic Euler conversion. `pitch`, `yaw` and `roll` are
-    /// rotations about the anchor's x, y and z axes.
+    /// Standard quaternion to intrinsic Euler conversion, about the x, y and z axes.
     private static func eulerAngles(from q: simd_quatf) -> (pitch: Float, yaw: Float, roll: Float) {
         let w = q.real, x = q.imag.x, y = q.imag.y, z = q.imag.z
-
         let pitch = atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
-
         let sinYaw = 2 * (w * y - z * x)
         let yaw = abs(sinYaw) >= 1
             ? Float(copysign(Double.pi / 2, Double(sinYaw)))
             : asin(sinYaw)
-
         let roll = atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-
         return (pitch, yaw, roll)
     }
 }

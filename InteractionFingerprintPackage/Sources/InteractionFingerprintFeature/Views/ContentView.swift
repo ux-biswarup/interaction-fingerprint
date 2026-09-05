@@ -2,13 +2,12 @@ import SwiftUI
 
 /// Debug harness for the sensing milestone.
 ///
-/// Not the study interface. Its only job is to prove the perception path works end to
-/// end and to make its accuracy visible: permission, session start, frame delivery,
-/// gaze ray projection, calibration quality and blend-shape reads. The shopping screens
-/// participants will use arrive with the instrumentation milestone.
+/// Not the study interface. Its job is to prove the perception path works end to end and
+/// to keep its accuracy visible at all times, so a bad recording is obvious while it is
+/// happening rather than during analysis weeks later.
 public struct ContentView: View {
     @State private var tracking = FaceTrackingSession()
-    @State private var calibrationRun: GazeCalibrationRun?
+    @State private var calibration: GazeCalibrationRun?
     @State private var cameraStatus = CameraAuthorization.statusDescription
     @State private var viewport: CGSize = .zero
     @Environment(\.displayScale) private var displayScale
@@ -19,31 +18,17 @@ public struct ContentView: View {
     public var body: some View {
         GeometryReader { proxy in
             content
-                .onAppear {
-                    viewport = proxy.size
-                    tracking.updateGeometry(pointSize: proxy.size, displayScale: displayScale)
-                }
-                .onChange(of: proxy.size) { _, size in
-                    viewport = size
-                    tracking.updateGeometry(pointSize: size, displayScale: displayScale)
-                }
+                .onAppear { syncGeometry(proxy.size) }
+                .onChange(of: proxy.size) { _, size in syncGeometry(size) }
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
-        .onChange(of: tracking.latest) { _, sample in
-            guard let sample, let run = calibrationRun else { return }
-            run.receive(
-                raw: rawPoint(from: sample),
-                eyesOpen: sample.eyesOpen,
-                timestamp: sample.timestamp
-            )
-            if case .finished(let fit) = run.phase { completeCalibration(with: fit) }
-        }
+        .onChange(of: tracking.latest) { _, sample in feedCalibration(sample) }
         .onChange(of: scenePhase) { _, phase in
             // ARKit cannot run in the background, and a live session drains the battery
             // and heats the device.
             if phase != .active {
-                calibrationRun = nil
+                calibration = nil
                 tracking.stop()
             }
         }
@@ -51,11 +36,22 @@ public struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let run = calibrationRun {
-            CalibrationView(run: run, viewport: viewport) {
-                calibrationRun = nil
-                tracking.stop()
-            }
+        if let run = calibration, let geometry = tracking.screenGeometry {
+            CalibrationView(
+                run: run,
+                geometry: geometry,
+                viewport: viewport,
+                onCancel: {
+                    calibration = nil
+                    tracking.stop()
+                },
+                onAccept: { model in
+                    tracking.model = model
+                    GazeModelStore.save(model)
+                    calibration = nil
+                },
+                onRetry: { run.cancel() }
+            )
         } else {
             trackingScreen
         }
@@ -65,16 +61,16 @@ public struct ContentView: View {
 
     private var trackingScreen: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Instrument.ink.ignoresSafeArea()
 
             if tracking.state == .running, let gaze = tracking.displayGaze {
-                GazeDot(normalised: gaze, viewport: viewport)
+                GazeDot(normalised: gaze, viewport: viewport, isConfident: tracking.quality.isConfident)
             }
 
             VStack(spacing: 0) {
                 header
                 Spacer(minLength: 0)
-                readouts
+                if tracking.state == .running { readouts }
                 controls
             }
             .padding(20)
@@ -82,38 +78,45 @@ public struct ContentView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 7) {
             Text("Interaction Fingerprint")
-                .font(.title3.weight(.semibold))
-            Text(FaceTrackingSupport.statusDescription)
-                .font(.caption)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(FaceTrackingSupport.isSupported ? Color.green : .secondary)
-            Text(cameraStatus)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Instrument.paper)
+
+            if !FaceTrackingSupport.isSupported {
+                Text(FaceTrackingSupport.statusDescription)
+                    .font(.caption2)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Instrument.warn)
+            }
+
             calibrationBadge
+
+            if tracking.state == .running {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(tracking.quality.isConfident ? Instrument.reticle : Instrument.warn)
+                        .frame(width: 6, height: 6)
+                    Text(tracking.quality.guidance)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(tracking.quality.isConfident ? Instrument.paper : Instrument.warn)
+                }
+            }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 44)
+        .padding(.top, 46)
     }
 
     private var calibrationBadge: some View {
         Group {
-            if let calibration = tracking.calibration {
-                Text(String(
-                    format: "Calibrated · %@ · mean error %.0f pt",
-                    calibration.qualityDescription,
-                    calibration.meanResidualPoints
-                ))
-                .foregroundStyle(calibration.meanResidualPoints < 80 ? Color.green : Color.orange)
+            if let model = tracking.model {
+                Text(model.summary)
             } else {
-                Text("Not calibrated · gaze is a rough estimate")
-                    .foregroundStyle(.orange)
+                Text("Not calibrated · rough estimate only")
             }
         }
-        .font(.caption2)
-        .padding(.top, 2)
+        .font(.system(size: 11, design: .monospaced))
+        .foregroundStyle(tracking.model == nil ? Instrument.warn : Instrument.paperDim)
     }
 
     @ViewBuilder
@@ -121,52 +124,43 @@ public struct ContentView: View {
         if case .failed(let message) = tracking.state {
             Text(message)
                 .font(.footnote)
-                .foregroundStyle(.red)
+                .foregroundStyle(Instrument.warn)
                 .multilineTextAlignment(.center)
                 .padding(.bottom, 12)
         }
 
-        if tracking.state == .running {
-            VStack(alignment: .leading, spacing: 9) {
-                statRow
-                gazeRow
-                blendShapeList
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Instrument.reading(String(format: "%.0f Hz", tracking.measuredHz), size: 11)
+                Spacer()
+                Instrument.reading(String(format: "%.0f%% tracked", tracking.trackedShare * 100), size: 11)
+                Spacer()
+                if let z = tracking.latest?.eyeZ {
+                    Instrument.reading(String(format: "%.0f cm", -z * 100), size: 11)
+                } else {
+                    Instrument.reading("— cm", size: 11)
+                }
             }
-            .font(.system(.caption2, design: .monospaced))
-            .padding(13)
-            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-            .padding(.bottom, 12)
+            gazeRow
+            blendShapeList
         }
-    }
-
-    private var statRow: some View {
-        HStack {
-            let tracked = tracking.latest?.isTracked == true
-            let open = tracking.latest?.eyesOpen == true
-            Label(
-                tracked ? (open ? "tracked" : "blink") : "no face",
-                systemImage: tracked ? (open ? "eye" : "eye.slash") : "person.slash"
-            )
-            .foregroundStyle(tracked ? (open ? Color.green : Color.yellow) : Color.orange)
-            Spacer()
-            Text(String(format: "%.0f Hz", tracking.measuredHz))
-            Spacer()
-            Text(String(format: "%.0f%% tracked", tracking.trackedShare * 100))
-        }
+        .padding(13)
+        .background(Instrument.paper.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.bottom, 12)
     }
 
     private var gazeRow: some View {
         VStack(alignment: .leading, spacing: 3) {
             if let sample = tracking.latest, let x = sample.gazeX, let y = sample.gazeY {
-                Text(String(format: "screen   x %.3f   y %.3f", x, y))
+                Instrument.reading(String(format: "screen  x %.3f  y %.3f", x, y), size: 11)
             } else {
-                Text("screen   —")
+                Instrument.reading("screen  —", size: 11)
             }
-            if let sample = tracking.latest, let x = sample.rawGazeX, let y = sample.rawGazeY {
-                Text(String(format: "raw (mm) x %+.1f   y %+.1f", x * 1000, y * 1000))
-                    .foregroundStyle(.secondary)
+            if let sample = tracking.latest, let u = sample.convergenceU, let v = sample.convergenceV {
+                Instrument.reading(String(format: "angle   u %+.3f  v %+.3f", u, v), size: 11)
+                    .foregroundStyle(Instrument.paperDim)
             } else {
-                Text("raw (mm) —").foregroundStyle(.secondary)
+                Instrument.reading("angle   —", size: 11).foregroundStyle(Instrument.paperDim)
             }
         }
     }
@@ -177,12 +171,15 @@ public struct ContentView: View {
                 let value = tracking.latest?.signals[key] ?? 0
                 HStack(spacing: 8) {
                     Text(key)
-                        .frame(width: 108, alignment: .leading)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 10, design: .monospaced))
+                        .frame(width: 100, alignment: .leading)
+                        .foregroundStyle(Instrument.paperDim)
                     ProgressView(value: min(max(value, 0), 1))
-                        .tint(.green)
+                        .tint(Instrument.reticle)
                     Text(String(format: "%.2f", value))
-                        .frame(width: 34, alignment: .trailing)
+                        .font(.system(size: 10, design: .monospaced))
+                        .frame(width: 32, alignment: .trailing)
+                        .foregroundStyle(Instrument.paper)
                 }
             }
         }
@@ -193,10 +190,11 @@ public struct ContentView: View {
             Button {
                 Task { await startCalibration() }
             } label: {
-                Text(tracking.calibration == nil ? "Calibrate" : "Recalibrate")
+                Text(tracking.model == nil ? "Calibrate" : "Recalibrate")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
+            .tint(Instrument.paper)
             .controlSize(.large)
             .disabled(!FaceTrackingSupport.isSupported)
 
@@ -207,17 +205,32 @@ public struct ContentView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .tint(Instrument.reticle)
+            .foregroundStyle(Instrument.ink)
             .controlSize(.large)
             .disabled(!FaceTrackingSupport.isSupported)
+
+            Text(cameraStatus)
+                .font(.system(size: 10))
+                .foregroundStyle(Instrument.paperDim)
         }
-        .padding(.bottom, 28)
+        .padding(.bottom, 30)
     }
 
     // MARK: Actions
 
-    private func rawPoint(from sample: FaceSample) -> CGPoint? {
-        guard let x = sample.rawGazeX, let y = sample.rawGazeY else { return nil }
-        return CGPoint(x: x, y: y)
+    private func syncGeometry(_ size: CGSize) {
+        viewport = size
+        tracking.updateGeometry(pointSize: size, displayScale: displayScale)
+    }
+
+    private func feedCalibration(_ sample: FaceSample?) {
+        guard let sample, let run = calibration else { return }
+        run.receive(
+            sample: tracking.latestCalibrationSample,
+            quality: tracking.quality,
+            timestamp: sample.timestamp
+        )
     }
 
     private func toggleSession() async {
@@ -232,16 +245,8 @@ public struct ContentView: View {
     private func startCalibration() async {
         guard await grantCamera() else { return }
         if tracking.state != .running { tracking.start() }
-        let run = GazeCalibrationRun(screenPointSize: viewport)
-        run.begin()
-        calibrationRun = run
-    }
-
-    private func completeCalibration(with fit: GazeCalibration?) {
-        calibrationRun = nil
-        guard let fit else { return }
-        tracking.calibration = fit
-        GazeCalibrationStore.save(fit)
+        guard let geometry = tracking.screenGeometry else { return }
+        calibration = GazeCalibrationRun(geometry: geometry)
     }
 
     private func grantCamera() async -> Bool {
@@ -251,20 +256,24 @@ public struct ContentView: View {
     }
 }
 
-/// The debug gaze dot. Display only; recorded samples keep the unfiltered position.
+/// The debug gaze dot. Display only; recorded samples keep the unfiltered angles.
+///
+/// Dims when the frame is outside the trustworthy envelope rather than disappearing, so
+/// the difference between "not tracking" and "tracking badly" stays visible.
 private struct GazeDot: View {
     let normalised: CGPoint
     let viewport: CGSize
+    let isConfident: Bool
 
     var body: some View {
         if viewport.width > 0 {
             Circle()
-                .fill(.green.opacity(0.85))
-                .frame(width: 24, height: 24)
-                .shadow(color: .green.opacity(0.6), radius: 12)
+                .fill(Instrument.reticle.opacity(isConfident ? 0.9 : 0.25))
+                .frame(width: 22, height: 22)
+                .shadow(color: Instrument.reticle.opacity(isConfident ? 0.5 : 0), radius: 10)
                 .position(
-                    x: normalised.x * viewport.width,
-                    y: normalised.y * viewport.height
+                    x: Double(normalised.x) * viewport.width,
+                    y: Double(normalised.y) * viewport.height
                 )
                 .allowsHitTesting(false)
         }

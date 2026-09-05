@@ -1,11 +1,10 @@
 import CoreGraphics
 import Foundation
 
-/// Head position and orientation for one frame.
+/// Head position and orientation for one frame, relative to the camera.
 ///
-/// Position is in metres relative to the camera. Rotation values are Euler angles in
-/// radians about the face anchor's x, y and z axes, which for a head-on face correspond
-/// approximately to pitch, yaw and roll.
+/// Position is in metres. Rotation values are Euler angles in radians about the face
+/// anchor's x, y and z axes, which for a head-on face correspond to pitch, yaw and roll.
 public struct HeadPose: Codable, Sendable, Equatable {
     public let x: Double
     public let y: Double
@@ -22,6 +21,9 @@ public struct HeadPose: Codable, Sendable, Equatable {
         self.yaw = yaw
         self.roll = roll
     }
+
+    /// Combined off-axis head rotation in radians, used for the quality envelope.
+    public var offAxisRotation: Double { (pitch * pitch + yaw * yaw).squareRoot() }
 }
 
 /// One frame of observable face and gaze measurements.
@@ -29,37 +31,47 @@ public struct HeadPose: Codable, Sendable, Equatable {
 /// Raw sensor data only. It carries no interpretation: `eyeSquint_L` is a number, never
 /// a claim about how someone feels. See `.claude/skills/privacy-responsible-ai`.
 ///
-/// Both the raw and the mapped gaze are kept. The raw screen-plane intersection in metres
-/// is the physical measurement and does not depend on the calibration in force at
-/// recording time, so a session can be re-mapped offline if a better calibration is
-/// fitted later. Discarding it would make old recordings unusable.
+/// The gaze **angles** are recorded alongside the eye position, not just the final screen
+/// coordinate. Angles plus eye position are the physical measurement and are independent
+/// of the calibration in force at recording time, so any session can be re-mapped offline
+/// with a better model later. Storing only the screen coordinate would strand every
+/// recording behind whichever calibration happened to be loaded that day.
 public struct FaceSample: Codable, Sendable, Equatable {
     /// Frame time from `ARFrame.timestamp`, in seconds on the device monotonic clock.
-    /// This is the master clock for the project. Interaction events are stamped from the
-    /// same time base through `ProcessInfo.systemUptime`.
+    /// The master clock for the project. Interaction events are stamped from the same
+    /// time base through `ProcessInfo.systemUptime`.
     public let timestamp: TimeInterval
 
-    /// False when ARKit has lost the face. Gaps are data and are recorded, not dropped.
     public let isTracked: Bool
 
-    /// False when either eye's blend shape says the eye is more than half closed. Gaze
-    /// during a blink is meaningless and must be filtered before fixation detection,
-    /// but the sample is still recorded so blink rate stays measurable.
+    /// False when either eye is more than half closed. Gaze during a blink is meaningless
+    /// and must be filtered before fixation detection, but the sample is still recorded so
+    /// blink rate stays measurable.
     public let eyesOpen: Bool
 
-    /// Where the gaze ray met the plane of the screen, in metres in camera space.
-    /// The physical measurement, independent of any calibration.
-    public let rawGazeX: Double?
-    public let rawGazeY: Double?
+    /// Why this frame is or is not trustworthy, as a stable string for analysis.
+    public let quality: String
 
-    /// Gaze normalised to the screen, origin top left, range 0...1. Values outside that
+    /// Eye midpoint in camera-space metres. z is negative, in front of the camera.
+    public let eyeX: Double?
+    public let eyeY: Double?
+    public let eyeZ: Double?
+
+    /// Gaze direction ratios from ARKit's convergence point: dx/dz and dy/dz.
+    public let convergenceU: Double?
+    public let convergenceV: Double?
+
+    /// Gaze direction ratios from each eye's own orientation, averaged.
+    public let perEyeU: Double?
+    public let perEyeV: Double?
+
+    /// Gaze mapped onto the screen, origin top left, range 0...1. Values outside that
     /// range mean the estimate fell off the display and are kept as they are.
     public let gazeX: Double?
     public let gazeY: Double?
 
-    /// True when a fitted calibration produced `gazeX` and `gazeY`. When false those
-    /// values came from the uncalibrated geometric fallback and should not be trusted
-    /// for analysis.
+    /// False when the mapping came from the uncalibrated geometric fallback. Those
+    /// samples must not be pooled with calibrated ones.
     public let isCalibrated: Bool
 
     /// The V0 blend-shape subset, keyed by `ARFaceAnchor.BlendShapeLocation` raw value.
@@ -71,10 +83,11 @@ public struct FaceSample: Codable, Sendable, Equatable {
         timestamp: TimeInterval,
         isTracked: Bool,
         eyesOpen: Bool,
-        rawGazeX: Double?,
-        rawGazeY: Double?,
-        gazeX: Double?,
-        gazeY: Double?,
+        quality: String,
+        eyeX: Double?, eyeY: Double?, eyeZ: Double?,
+        convergenceU: Double?, convergenceV: Double?,
+        perEyeU: Double?, perEyeV: Double?,
+        gazeX: Double?, gazeY: Double?,
         isCalibrated: Bool,
         signals: [String: Double],
         head: HeadPose?
@@ -82,8 +95,14 @@ public struct FaceSample: Codable, Sendable, Equatable {
         self.timestamp = timestamp
         self.isTracked = isTracked
         self.eyesOpen = eyesOpen
-        self.rawGazeX = rawGazeX
-        self.rawGazeY = rawGazeY
+        self.quality = quality
+        self.eyeX = eyeX
+        self.eyeY = eyeY
+        self.eyeZ = eyeZ
+        self.convergenceU = convergenceU
+        self.convergenceV = convergenceV
+        self.perEyeU = perEyeU
+        self.perEyeV = perEyeV
         self.gazeX = gazeX
         self.gazeY = gazeY
         self.isCalibrated = isCalibrated
@@ -92,8 +111,10 @@ public struct FaceSample: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case timestamp, isTracked, eyesOpen
-        case rawGazeX, rawGazeY, gazeX, gazeY, isCalibrated
+        case timestamp, isTracked, eyesOpen, quality
+        case eyeX, eyeY, eyeZ
+        case convergenceU, convergenceV, perEyeU, perEyeV
+        case gazeX, gazeY, isCalibrated
         case signals, head
     }
 
@@ -105,22 +126,30 @@ public struct FaceSample: Codable, Sendable, Equatable {
         try container.encode(timestamp, forKey: .timestamp)
         try container.encode(isTracked, forKey: .isTracked)
         try container.encode(eyesOpen, forKey: .eyesOpen)
+        try container.encode(quality, forKey: .quality)
         try container.encode(isCalibrated, forKey: .isCalibrated)
         try container.encode(signals, forKey: .signals)
 
-        if let rawGazeX { try container.encode(rawGazeX, forKey: .rawGazeX) }
-        else { try container.encodeNil(forKey: .rawGazeX) }
-
-        if let rawGazeY { try container.encode(rawGazeY, forKey: .rawGazeY) }
-        else { try container.encodeNil(forKey: .rawGazeY) }
-
-        if let gazeX { try container.encode(gazeX, forKey: .gazeX) }
-        else { try container.encodeNil(forKey: .gazeX) }
-
-        if let gazeY { try container.encode(gazeY, forKey: .gazeY) }
-        else { try container.encodeNil(forKey: .gazeY) }
+        try encodeOrNull(eyeX, .eyeX, into: &container)
+        try encodeOrNull(eyeY, .eyeY, into: &container)
+        try encodeOrNull(eyeZ, .eyeZ, into: &container)
+        try encodeOrNull(convergenceU, .convergenceU, into: &container)
+        try encodeOrNull(convergenceV, .convergenceV, into: &container)
+        try encodeOrNull(perEyeU, .perEyeU, into: &container)
+        try encodeOrNull(perEyeV, .perEyeV, into: &container)
+        try encodeOrNull(gazeX, .gazeX, into: &container)
+        try encodeOrNull(gazeY, .gazeY, into: &container)
 
         if let head { try container.encode(head, forKey: .head) }
         else { try container.encodeNil(forKey: .head) }
+    }
+
+    private func encodeOrNull(
+        _ value: Double?,
+        _ key: CodingKeys,
+        into container: inout KeyedEncodingContainer<CodingKeys>
+    ) throws {
+        if let value { try container.encode(value, forKey: key) }
+        else { try container.encodeNil(forKey: key) }
     }
 }
