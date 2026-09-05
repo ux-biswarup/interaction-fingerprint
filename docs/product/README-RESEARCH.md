@@ -11,6 +11,8 @@ Read these files in order:
 7. `06-RESEARCH-PRINCIPLES.md` — scientific/privacy/design constraints
 8. `07-ROADMAP.md` — phased implementation plan
 9. `08-AGENT-INSTRUCTIONS.md` — instructions for coding/research agents
+10. `09-GAZE-ACCURACY.md` — what gaze accuracy is achievable, with evidence, and the
+    design constraints that follow from it
 
 Current milestone:
 

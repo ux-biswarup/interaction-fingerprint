@@ -42,12 +42,16 @@ public final class GazeCalibrationRun {
     /// rather than allowed to poison the fit.
     nonisolated public static let maximumAngularSpread = 0.030
 
-    /// A three by three grid, inset from the edges. Accuracy is worst at the extremes, and
-    /// the corners of an iPhone display are partly obscured by the sensor housing and the
-    /// home indicator.
+    /// Three columns by four rows, inset from the edges.
+    ///
+    /// Taller than it is wide because the display is, and because the areas of interest in
+    /// the study stack vertically. Coverage is what lets a quadratic correction follow the
+    /// curvature near the edges instead of extrapolating into it. The insets keep targets
+    /// clear of the sensor housing and the home indicator.
     nonisolated public static let targets: [CGPoint] = {
-        let positions: [Double] = [0.15, 0.5, 0.85]
-        return positions.flatMap { y in positions.map { x in CGPoint(x: x, y: y) } }
+        let columns: [Double] = [0.15, 0.5, 0.85]
+        let rows: [Double] = [0.15, 0.38, 0.62, 0.85]
+        return rows.flatMap { y in columns.map { x in CGPoint(x: x, y: y) } }
     }()
 
     public private(set) var phase: Phase = .readiness
@@ -220,14 +224,15 @@ public final class GazeCalibrationRun {
     }
 
     private func finishTarget(_ index: Int, isFar: Bool, timestamp: TimeInterval) {
-        if let point = Self.reduce(
+        let produced = Self.reduce(
             samples: currentSamples,
             target: Self.targets[index],
             targetIndex: index
-        ) {
-            points.append(point)
-        } else {
+        )
+        if produced.isEmpty {
             failedTargets += 1
+        } else {
+            points.append(contentsOf: produced)
         }
 
         currentSamples = []
@@ -266,48 +271,97 @@ public final class GazeCalibrationRun {
 
     // MARK: Robust reduction
 
-    /// Turns a burst of frames into one calibration point, or rejects it.
+    /// How far from the burst median a frame may sit before it is discarded, as a multiple
+    /// of the median absolute deviation.
+    nonisolated static let outlierCutoff = 3.0
+    /// Floor under the measured spread, in gaze angle ratio units, roughly a tenth of a
+    /// degree. Without it a very steady burst has a spread of zero and outlier rejection
+    /// silently switches itself off, letting a single wild frame through untouched.
+    nonisolated static let minimumSpread = 0.002
+
+    /// Turns a burst of frames into calibration points, or rejects the target entirely.
     ///
-    /// Rejection matters more than it looks. A target where the person glanced away leaves
-    /// a plausible looking median that is simply wrong, and one bad target out of nine can
-    /// drag the whole fit. Requiring the burst to actually be a fixation catches that.
+    /// Every surviving frame becomes its own point rather than being collapsed to a single
+    /// median. Reducing a burst of roughly thirty frames to one number throws away almost
+    /// all of the calibration data, and the published smartphone gaze work is explicit that
+    /// personalisation needs on the order of a hundred frames before it starts to help.
+    /// Nine targets gave nine numbers. Nine targets now give several hundred.
+    ///
+    /// Rejection still happens at the level of the whole target. A target where the person
+    /// glanced away leaves a plausible looking cluster that is simply wrong, and no amount
+    /// of extra frames fixes that.
     nonisolated static func reduce(
         samples: [Sample],
         target: CGPoint,
         targetIndex: Int
-    ) -> GazeCalibrationPoint? {
-        guard samples.count >= minimumSamplesPerTarget else { return nil }
+    ) -> [GazeCalibrationPoint] {
+        guard samples.count >= minimumSamplesPerTarget else { return [] }
 
-        let convergence = stableMeasurement(samples.compactMap(\.convergence))
-        let perEye = stableMeasurement(samples.compactMap(\.perEye))
-        guard convergence != nil || perEye != nil else { return nil }
+        let convergence = samples.compactMap(\.convergence)
+        let perEye = samples.compactMap(\.perEye)
+        guard isFixation(convergence) || isFixation(perEye) else { return [] }
 
-        return GazeCalibrationPoint(
-            target: target,
-            targetIndex: targetIndex,
-            convergence: convergence,
-            perEye: perEye,
-            headYaw: median(samples.map(\.headYaw)),
-            headPitch: median(samples.map(\.headPitch))
-        )
+        let keepConvergence = isFixation(convergence)
+        let keepPerEye = isFixation(perEye)
+
+        var result: [GazeCalibrationPoint] = []
+        result.reserveCapacity(samples.count)
+
+        let convergenceCentre = keepConvergence ? centre(convergence) : nil
+        let perEyeCentre = keepPerEye ? centre(perEye) : nil
+        let convergenceSpread = keepConvergence ? spread(convergence) : 0
+        let perEyeSpread = keepPerEye ? spread(perEye) : 0
+
+        for sample in samples {
+            let c = keepConvergence
+                ? accept(sample.convergence, centre: convergenceCentre, spread: convergenceSpread)
+                : nil
+            let p = keepPerEye
+                ? accept(sample.perEye, centre: perEyeCentre, spread: perEyeSpread)
+                : nil
+            guard c != nil || p != nil else { continue }
+            result.append(
+                GazeCalibrationPoint(
+                    target: target,
+                    targetIndex: targetIndex,
+                    convergence: c,
+                    perEye: p,
+                    headYaw: sample.headYaw,
+                    headPitch: sample.headPitch
+                )
+            )
+        }
+
+        return result.count >= minimumSamplesPerTarget ? result : []
     }
 
-    /// Median across the burst, but only if the burst was steady enough to be a fixation.
-    nonisolated static func stableMeasurement(_ values: [GazeMeasurement]) -> GazeMeasurement? {
-        guard values.count >= minimumSamplesPerTarget else { return nil }
+    /// Drops a frame that sits far from the rest of its burst.
+    nonisolated private static func accept(
+        _ measurement: GazeMeasurement?,
+        centre: (u: Double, v: Double)?,
+        spread: Double
+    ) -> GazeMeasurement? {
+        guard let measurement, let centre else { return nil }
+        let distance = ((measurement.u - centre.u) * (measurement.u - centre.u)
+            + (measurement.v - centre.v) * (measurement.v - centre.v)).squareRoot()
+        return distance <= outlierCutoff * max(spread, minimumSpread) ? measurement : nil
+    }
 
-        let us = values.map(\.u)
-        let vs = values.map(\.v)
-        guard medianAbsoluteDeviation(us) <= maximumAngularSpread,
-              medianAbsoluteDeviation(vs) <= maximumAngularSpread
-        else { return nil }
+    /// Was this burst actually a fixation, or did the eyes wander during it?
+    nonisolated static func isFixation(_ values: [GazeMeasurement]) -> Bool {
+        guard values.count >= minimumSamplesPerTarget else { return false }
+        return medianAbsoluteDeviation(values.map(\.u)) <= maximumAngularSpread
+            && medianAbsoluteDeviation(values.map(\.v)) <= maximumAngularSpread
+    }
 
-        return GazeMeasurement(
-            u: median(us),
-            v: median(vs),
-            eyeX: median(values.map(\.eyeX)),
-            eyeY: median(values.map(\.eyeY)),
-            distance: median(values.map(\.distance))
+    nonisolated static func centre(_ values: [GazeMeasurement]) -> (u: Double, v: Double) {
+        (median(values.map(\.u)), median(values.map(\.v)))
+    }
+
+    nonisolated static func spread(_ values: [GazeMeasurement]) -> Double {
+        max(
+            medianAbsoluteDeviation(values.map(\.u)),
+            medianAbsoluteDeviation(values.map(\.v))
         )
     }
 

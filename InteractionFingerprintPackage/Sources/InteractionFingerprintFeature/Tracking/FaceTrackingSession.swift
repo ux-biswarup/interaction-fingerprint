@@ -156,8 +156,12 @@ public final class FaceTrackingSession {
             lookAtPoint: anchor.lookAtPoint
         )
 
-        let convergenceMeasurement = convergence.flatMap(GazeMeasurement.init)
-        let perEyeMeasurement = perEye.flatMap(GazeMeasurement.init)
+        let convergenceMeasurement = convergence.flatMap {
+            GazeMeasurement($0, headYaw: head.yaw, headPitch: head.pitch)
+        }
+        let perEyeMeasurement = perEye.flatMap {
+            GazeMeasurement($0, headYaw: head.yaw, headPitch: head.pitch)
+        }
         let reference = convergenceMeasurement ?? perEyeMeasurement
 
         quality = GazeQuality.evaluate(

@@ -8,6 +8,8 @@ import SwiftUI
 public struct ContentView: View {
     @State private var tracking = FaceTrackingSession()
     @State private var calibration: GazeCalibrationRun?
+    @State private var lateralityCheck: EyeLateralityCheck?
+    @State private var laterality = EyeLateralityStore.load()
     @State private var cameraStatus = CameraAuthorization.statusDescription
     @State private var viewport: CGSize = .zero
     @Environment(\.displayScale) private var displayScale
@@ -23,12 +25,16 @@ public struct ContentView: View {
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
-        .onChange(of: tracking.latest) { _, sample in feedCalibration(sample) }
+        .onChange(of: tracking.latest) { _, sample in
+            feedCalibration(sample)
+            feedLateralityCheck(sample)
+        }
         .onChange(of: scenePhase) { _, phase in
             // ARKit cannot run in the background, and a live session drains the battery
             // and heats the device.
             if phase != .active {
                 calibration = nil
+                lateralityCheck = nil
                 tracking.stop()
             }
         }
@@ -36,7 +42,21 @@ public struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let run = calibration, let geometry = tracking.screenGeometry {
+        if let check = lateralityCheck {
+            EyeLateralityView(
+                check: check,
+                onAccept: { result in
+                    laterality = result
+                    EyeLateralityStore.save(result)
+                    lateralityCheck = nil
+                },
+                onRetry: { check.restart() },
+                onCancel: {
+                    lateralityCheck = nil
+                    tracking.stop()
+                }
+            )
+        } else if let run = calibration, let geometry = tracking.screenGeometry {
             CalibrationView(
                 run: run,
                 geometry: geometry,
@@ -91,6 +111,15 @@ public struct ContentView: View {
             }
 
             calibrationBadge
+            if let laterality {
+                Text(laterality.summary)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Instrument.paperDim)
+            } else {
+                Text("Eye labels unverified")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Instrument.warn)
+            }
 
             if tracking.state == .running {
                 HStack(spacing: 6) {
@@ -173,9 +202,9 @@ public struct ContentView: View {
             ForEach(TrackedBlendShapes.keys, id: \.self) { key in
                 let value = tracking.latest?.signals[key] ?? 0
                 HStack(spacing: 8) {
-                    Text(key)
+                    Text(label(for: key))
                         .font(.system(size: 10, design: .monospaced))
-                        .frame(width: 100, alignment: .leading)
+                        .frame(width: 132, alignment: .leading)
                         .foregroundStyle(Instrument.paperDim)
                     ProgressView(value: min(max(value, 0), 1))
                         .tint(Instrument.reticle)
@@ -188,8 +217,26 @@ public struct ContentView: View {
         }
     }
 
+    /// Names the participant's own eye once the wink test has resolved it, because the
+    /// raw channel name is ambiguous and getting it backwards would invert findings.
+    private func label(for key: String) -> String {
+        guard let side = laterality?.participantSide(forARKitKey: key) else { return key }
+        return "\(key) (\(side))"
+    }
+
     private var controls: some View {
         VStack(spacing: 10) {
+            Button {
+                Task { await startLateralityCheck() }
+            } label: {
+                Text(laterality == nil ? "Check eye labels" : "Re-check eye labels")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(laterality == nil ? Instrument.warn : Instrument.paper)
+            .controlSize(.large)
+            .disabled(!FaceTrackingSupport.isSupported)
+
             Button {
                 Task { await startCalibration() }
             } label: {
@@ -243,6 +290,21 @@ public struct ContentView: View {
         }
         guard await grantCamera() else { return }
         tracking.start()
+    }
+
+    private func feedLateralityCheck(_ sample: FaceSample?) {
+        guard let sample, let check = lateralityCheck else { return }
+        check.receive(
+            signals: sample.signals,
+            isTracked: sample.isTracked,
+            timestamp: sample.timestamp
+        )
+    }
+
+    private func startLateralityCheck() async {
+        guard await grantCamera() else { return }
+        if tracking.state != .running { tracking.start() }
+        lateralityCheck = EyeLateralityCheck()
     }
 
     private func startCalibration() async {

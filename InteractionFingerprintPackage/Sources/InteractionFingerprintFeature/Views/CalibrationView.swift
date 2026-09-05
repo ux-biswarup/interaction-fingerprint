@@ -205,15 +205,21 @@ private struct ResultsStep: View {
     private func succeeded(_ model: GazeModel) -> some View {
         VStack(spacing: 0) {
             VStack(spacing: 3) {
-                Instrument.label("Mean error, held out")
+                Instrument.label("Accuracy, held out")
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(String(format: "%.0f", model.heldOutErrorPoints))
+                    Text(String(format: "%.0f", model.accuracyPoints))
                         .font(.system(size: 64, weight: .semibold, design: .monospaced))
                         .foregroundStyle(Instrument.paper)
                     Text("pt")
                         .font(.system(size: 18, weight: .medium, design: .monospaced))
                         .foregroundStyle(Instrument.paperDim)
                 }
+                Text(String(format: "%.2f° · %.1f mm at %.0f cm",
+                            model.accuracyDegrees,
+                            model.accuracyDegrees * .pi / 180 * model.meanCalibrationDistance * 1000,
+                            model.meanCalibrationDistance * 100))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Instrument.paperDim)
                 Text(verdict(model))
                     .font(.system(size: 13))
                     .foregroundStyle(tint(model))
@@ -225,7 +231,25 @@ private struct ResultsStep: View {
             .padding(.vertical, 18)
 
             VStack(spacing: 7) {
-                row("Worst target", String(format: "%.0f pt", model.worstHeldOutErrorPoints))
+                row("Worst target", String(format: "%.0f pt", model.worstTargetPoints))
+                row("Per single frame", String(format: "%.0f pt", model.perSampleErrorPoints))
+                row("Scatter (averages away)", String(format: "%.0f pt", model.precisionPoints))
+                row(
+                    "Within a 300 ms fixation",
+                    String(format: "≈%.0f pt · %.0f mm",
+                           model.fixationErrorPoints(samples: 18),
+                           model.fixationErrorPoints(samples: 18) / 6.04),
+                    tint: Instrument.reticle
+                )
+                row(
+                    "On its own targets",
+                    String(format: "%.0f pt · gap %.0f",
+                           model.inSampleAccuracyPoints, model.generalisationGapPoints),
+                    tint: model.generalisationGapPoints > model.inSampleAccuracyPoints
+                        ? Instrument.warn : Instrument.paper
+                )
+                row("Frames used", "\(model.sampleCount) over \(model.targetCount) targets")
+                row("Published ARKit ceiling", "3.18°")
                 row("Distance", String(
                     format: "%.0f–%.0f cm",
                     model.calibratedDistanceRange.lowerBound * 100,

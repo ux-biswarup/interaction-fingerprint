@@ -57,10 +57,13 @@ private struct SyntheticObserver {
         )
     }
 
-    /// A full calibration: the whole grid seen at two viewing distances.
-    func calibration(near: Double = 0.32, far: Double = 0.46) -> [GazeCalibrationPoint] {
+    /// A full calibration: the whole grid seen at two viewing distances, with a burst of
+    /// frames per target as the real run produces.
+    func calibration(near: Double = 0.32, far: Double = 0.46, framesPerTarget: Int = 20) -> [GazeCalibrationPoint] {
         GazeCalibrationRun.targets.indices.flatMap { index in
-            [point(index, from: near), point(index, from: far)]
+            (0..<framesPerTarget).flatMap { _ in
+                [point(index, from: near), point(index, from: far)]
+            }
         }
     }
 
@@ -218,7 +221,7 @@ func calibrationSolvesCameraPosition() throws {
     let offset = model.cameraOffsetMillimetres
     #expect(abs(offset.x - 7.5) < 0.5)
     #expect(abs(offset.y + 11.0) < 0.5)
-    #expect(model.heldOutErrorPoints < 3)
+    #expect(model.accuracyPoints < 3)
 }
 
 @Test("A calibration built at two distances holds at distances it never saw")
@@ -306,9 +309,9 @@ func fitterRanksCandidates() {
     let observer = SyntheticObserver()
     let ranked = GazeModelFitter.rank(points: observer.calibration(), geometry: observer.geometry)
     #expect(!ranked.isEmpty)
-    let errors = ranked.map(\.model.heldOutErrorPoints)
+    let errors = ranked.map(\.model.accuracyPoints)
     #expect(errors == errors.sorted())
-    #expect(ranked[0].model.heldOutErrorPoints < 3)
+    #expect(ranked[0].model.accuracyPoints < 3)
 }
 
 @Test("Holding a target out removes it at every distance it was visited")
@@ -318,11 +321,12 @@ func crossValidationGroupsByTargetPosition() throws {
     let observer = SyntheticObserver()
     let points = observer.calibration()
     let groups = Set(points.map(\.targetIndex))
-    #expect(groups.count == 9)
-    #expect(points.count == 18)
+    #expect(groups.count == GazeCalibrationRun.targets.count)
+    #expect(points.count == GazeCalibrationRun.targets.count * 40)
 
     let model = try #require(GazeModelFitter.best(points: points, geometry: observer.geometry))
-    #expect(model.targetCount == 18)
+    #expect(model.targetCount == GazeCalibrationRun.targets.count)
+    #expect(model.sampleCount == points.count)
 }
 
 @Test("A calibration built from too few targets is refused")
@@ -414,42 +418,6 @@ func medianIgnoresOutliers() {
     #expect(abs(GazeCalibrationRun.median([1, 2, 3, 4]) - 2.5) < 1e-12)
 }
 
-@Test("A steady burst reduces to its median")
-func steadyBurstIsAccepted() throws {
-    let values = (0..<12).map { index in
-        GazeMeasurement(
-            u: 0.10 + Double(index % 3) * 0.001,
-            v: -0.20,
-            eyeX: 0.01, eyeY: -0.04, distance: 0.35
-        )
-    }
-    let reduced = try #require(GazeCalibrationRun.stableMeasurement(values))
-    #expect(abs(reduced.u - 0.101) < 1e-9)
-    #expect(abs(reduced.v + 0.20) < 1e-9)
-}
-
-@Test("A burst where the eyes wandered is discarded rather than averaged")
-func wanderingBurstIsRejected() {
-    // Half the frames on the target and half somewhere else. The median would look
-    // plausible and be wrong, so the target is thrown away instead.
-    let values = (0..<12).map { index in
-        GazeMeasurement(
-            u: index < 6 ? 0.10 : 0.35,
-            v: -0.20,
-            eyeX: 0.01, eyeY: -0.04, distance: 0.35
-        )
-    }
-    #expect(GazeCalibrationRun.stableMeasurement(values) == nil)
-}
-
-@Test("A burst that is too short is discarded")
-func shortBurstIsRejected() {
-    let values = (0..<4).map { _ in
-        GazeMeasurement(u: 0.1, v: -0.2, eyeX: 0.01, eyeY: -0.04, distance: 0.35)
-    }
-    #expect(GazeCalibrationRun.stableMeasurement(values) == nil)
-}
-
 @Test("Median absolute deviation is not inflated by one outlier")
 func madResistsOutliers() {
     #expect(abs(GazeCalibrationRun.medianAbsoluteDeviation([1, 1, 1, 1, 100]) - 0) < 1e-12)
@@ -523,4 +491,294 @@ func untrackedSampleKeepsNullGaze() throws {
 func headPoseCombinesRotation() {
     let pose = HeadPose(x: 0, y: 0, z: -0.35, pitch: 0.3, yaw: 0.4, roll: 1.0)
     #expect(abs(pose.offAxisRotation - 0.5) < 1e-12)
+}
+
+
+// MARK: - Frame level calibration data
+
+@Test("A burst becomes many calibration points, not one")
+func burstProducesEveryFrame() {
+    // Collapsing thirty frames into a single median discards almost all the calibration
+    // data, and the published smartphone gaze work needs on the order of a hundred frames
+    // before personalisation helps at all.
+    let samples = (0..<30).map { index in
+        GazeCalibrationRun.Sample(
+            convergence: GazeMeasurement(
+                u: 0.10 + Double(index % 3) * 0.001, v: -0.20,
+                eyeX: 0.01, eyeY: -0.04, distance: 0.35
+            ),
+            perEye: nil, headYaw: 0, headPitch: 0
+        )
+    }
+    let produced = GazeCalibrationRun.reduce(samples: samples, target: CGPoint(x: 0.5, y: 0.5), targetIndex: 4)
+    #expect(produced.count == 30)
+    #expect(produced.allSatisfy { $0.targetIndex == 4 })
+}
+
+@Test("A burst where the eyes wandered is discarded whole, not averaged")
+func wanderingBurstIsRejected() {
+    let samples = (0..<20).map { index in
+        GazeCalibrationRun.Sample(
+            convergence: GazeMeasurement(
+                u: index < 10 ? 0.10 : 0.35, v: -0.20,
+                eyeX: 0.01, eyeY: -0.04, distance: 0.35
+            ),
+            perEye: nil, headYaw: 0, headPitch: 0
+        )
+    }
+    #expect(GazeCalibrationRun.reduce(samples: samples, target: .zero, targetIndex: 0).isEmpty)
+}
+
+@Test("A stray frame inside an otherwise steady burst is dropped")
+func strayFrameIsDropped() {
+    var samples = (0..<20).map { _ in
+        GazeCalibrationRun.Sample(
+            convergence: GazeMeasurement(u: 0.10, v: -0.20, eyeX: 0.01, eyeY: -0.04, distance: 0.35),
+            perEye: nil, headYaw: 0, headPitch: 0
+        )
+    }
+    samples[7] = GazeCalibrationRun.Sample(
+        convergence: GazeMeasurement(u: 0.9, v: -0.9, eyeX: 0.01, eyeY: -0.04, distance: 0.35),
+        perEye: nil, headYaw: 0, headPitch: 0
+    )
+    let produced = GazeCalibrationRun.reduce(samples: samples, target: .zero, targetIndex: 0)
+    #expect(produced.count == 19)
+}
+
+@Test("A burst that is too short is discarded")
+func shortBurstIsRejected() {
+    let samples = (0..<4).map { _ in
+        GazeCalibrationRun.Sample(
+            convergence: GazeMeasurement(u: 0.1, v: -0.2, eyeX: 0.01, eyeY: -0.04, distance: 0.35),
+            perEye: nil, headYaw: 0, headPitch: 0
+        )
+    }
+    #expect(GazeCalibrationRun.reduce(samples: samples, target: .zero, targetIndex: 0).isEmpty)
+}
+
+// MARK: - Reporting accuracy in comparable units
+
+@Test("Error is reported as a visual angle so it can be compared with the literature")
+func errorIsReportedInDegrees() {
+    let geometry = ScreenGeometry(pointSize: CGSize(width: 393, height: 852), displayScale: 3)
+    // Published ARKit geometric gaze is about 3.18 degrees, which is 1.44 cm on screen and
+    // about 87 points on this display. That is the ceiling this project is measured against.
+    let degrees = GazeModelFitter.degrees(points: 87, distance: 0.26, geometry: geometry)
+    #expect(abs(degrees - 3.18) < 0.35)
+}
+
+@Test("Aggregating a fixation is more accurate than any single sample")
+func fixationAveragingBeatsSingleSamples() throws {
+    let observer = SyntheticObserver()
+    let model = try #require(
+        GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry)
+    )
+    // Analysis works on fixations, not raw samples, so this is the number that governs
+    // whether two areas of interest can be told apart.
+    #expect(model.fixationErrorPoints(samples: 18) < model.accuracyPoints)
+    #expect(model.fixationErrorPoints(samples: 1) == model.perSampleErrorPoints)
+}
+
+
+// MARK: - Accuracy versus precision
+
+/// A synthetic observer whose estimate also jitters frame to frame, so the split between
+/// bias and scatter can be checked.
+private struct NoisyObserver {
+    let base = SyntheticObserver()
+    var jitter = 0.010
+
+    func calibration(framesPerTarget: Int = 40) -> [GazeCalibrationPoint] {
+        var seed = UInt64(20260905)
+        func next() -> Double {
+            // Deterministic so the test cannot flake.
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return Double(seed >> 11) / Double(UInt64(1) << 53) - 0.5
+        }
+        return GazeCalibrationRun.targets.indices.flatMap { index -> [GazeCalibrationPoint] in
+            (0..<framesPerTarget).flatMap { _ -> [GazeCalibrationPoint] in
+                [0.32, 0.46].map { distance in
+                    let clean = base.measurement(lookingAt: GazeCalibrationRun.targets[index], from: distance)
+                    let noisy = GazeMeasurement(
+                        u: clean.u + next() * jitter,
+                        v: clean.v + next() * jitter,
+                        eyeX: clean.eyeX, eyeY: clean.eyeY, distance: clean.distance
+                    )
+                    return GazeCalibrationPoint(
+                        target: GazeCalibrationRun.targets[index],
+                        targetIndex: index,
+                        convergence: noisy, perEye: noisy,
+                        headYaw: 0, headPitch: 0
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Test("Frame to frame scatter is measured separately from systematic bias")
+func precisionIsMeasuredSeparately() throws {
+    let observer = NoisyObserver()
+    let model = try #require(
+        GazeModelFitter.best(points: observer.calibration(), geometry: observer.base.geometry)
+    )
+    // The simulated tracker jitters, so scatter must be reported as non-zero.
+    #expect(model.precisionPoints > 1)
+    // Total error and scatter combine in quadrature, so bias can never exceed the total.
+    #expect(model.biasPoints <= model.perSampleErrorPoints + 1e-9)
+}
+
+@Test("A fixation is more accurate than a sample, but never better than the bias floor")
+func fixationErrorApproachesTheBiasFloor() throws {
+    let observer = NoisyObserver()
+    let model = try #require(
+        GazeModelFitter.best(points: observer.calibration(), geometry: observer.base.geometry)
+    )
+    let single = model.fixationErrorPoints(samples: 1)
+    let fixation = model.fixationErrorPoints(samples: 18)
+    let huge = model.fixationErrorPoints(samples: 100_000)
+
+    #expect(single == model.perSampleErrorPoints)
+    #expect(fixation <= single)
+    // No amount of averaging removes the systematic part.
+    #expect(abs(huge - model.biasPoints) < 0.5)
+}
+
+@Test("Head pose terms are refused when the head never moved")
+func headPoseTermsNeedHeadMovement() throws {
+    let observer = SyntheticObserver()
+    let model = try #require(
+        GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry)
+    )
+    // Every synthetic frame has zero yaw and pitch, so those columns carry no information
+    // and fitting them would be inventing signal.
+    #expect(!model.basis.usesHeadPose)
+}
+
+@Test("The calibration grid is taller than it is wide, matching the display")
+func calibrationGridMatchesScreenShape() {
+    let targets = GazeCalibrationRun.targets
+    #expect(targets.count == 12)
+    #expect(Set(targets.map { $0.x }).count == 3)
+    #expect(Set(targets.map { $0.y }).count == 4)
+}
+
+// MARK: - Eye laterality
+
+@Test("A verified mapping names the participant's own eye for each channel")
+func lateralityMapsChannelsToPhysicalEyes() {
+    let mirrored = EyeLaterality(arkitLeftIsParticipantRight: true, separation: 0.8)
+    #expect(mirrored.participantSide(forARKitKey: "eyeBlink_L") == "right")
+    #expect(mirrored.participantSide(forARKitKey: "eyeSquint_R") == "left")
+    // Channels with no side, like browInnerUp, have no answer to give.
+    #expect(mirrored.participantSide(forARKitKey: "browInnerUp") == nil)
+
+    let asDocumented = EyeLaterality(arkitLeftIsParticipantRight: false, separation: 0.8)
+    #expect(asDocumented.participantSide(forARKitKey: "eyeBlink_L") == "left")
+    #expect(asDocumented.participantSide(forARKitKey: "eyeWide_R") == "right")
+}
+
+@Test("A mapping that barely separated is not trusted")
+func lateralityNeedsCleanSeparation() {
+    #expect(EyeLaterality(arkitLeftIsParticipantRight: true, separation: 0.9).isTrustworthy)
+    #expect(!EyeLaterality(arkitLeftIsParticipantRight: true, separation: 0.1).isTrustworthy)
+}
+
+@Test("A round trip through storage preserves the mapping")
+func lateralitySurvivesStorage() throws {
+    let defaults = try #require(UserDefaults(suiteName: "laterality.test.\(UUID().uuidString)"))
+    let value = EyeLaterality(arkitLeftIsParticipantRight: true, separation: 0.72)
+
+    EyeLateralityStore.save(value, to: defaults)
+    #expect(EyeLateralityStore.load(from: defaults) == value)
+
+    EyeLateralityStore.clear(from: defaults)
+    #expect(EyeLateralityStore.load(from: defaults) == nil)
+}
+
+@MainActor
+@Test("Winking the named eye resolves which channel reports on it")
+func winkTestResolvesTheMapping() {
+    let check = EyeLateralityCheck()
+    let settle = EyeLateralityCheck.settleDuration
+    let measure = EyeLateralityCheck.measureDuration
+
+    // First prompt asks for the right eye. Simulate the _L channel responding, which is
+    // the behaviour observed on device and the opposite of Apple's documentation.
+    func feed(from start: Double, leftChannel: Double, rightChannel: Double) {
+        var t = start
+        while t <= start + settle + measure + 0.05 {
+            check.receive(
+                signals: ["eyeBlink_L": leftChannel, "eyeBlink_R": rightChannel],
+                isTracked: true,
+                timestamp: t
+            )
+            t += 1.0 / 60.0
+        }
+    }
+
+    feed(from: 0, leftChannel: 0.95, rightChannel: 0.05)
+    // Second prompt asks for the left eye, so the other channel should respond.
+    feed(from: 100, leftChannel: 0.04, rightChannel: 0.93)
+
+    guard case .finished(let result, let disagreed) = check.phase else {
+        Issue.record("the check did not finish")
+        return
+    }
+    #expect(!disagreed)
+    #expect(result?.arkitLeftIsParticipantRight == true)
+}
+
+@MainActor
+@Test("Two winks that contradict each other are reported rather than averaged")
+func winkTestRejectsContradiction() {
+    let check = EyeLateralityCheck()
+    let span = EyeLateralityCheck.settleDuration + EyeLateralityCheck.measureDuration + 0.05
+
+    func feed(from start: Double, leftChannel: Double, rightChannel: Double) {
+        var t = start
+        while t <= start + span {
+            check.receive(
+                signals: ["eyeBlink_L": leftChannel, "eyeBlink_R": rightChannel],
+                isTracked: true,
+                timestamp: t
+            )
+            t += 1.0 / 60.0
+        }
+    }
+
+    // The same channel responds to both prompts, which means one wink closed the wrong eye.
+    feed(from: 0, leftChannel: 0.95, rightChannel: 0.05)
+    feed(from: 100, leftChannel: 0.95, rightChannel: 0.05)
+
+    guard case .finished(let result, let disagreed) = check.phase else {
+        Issue.record("the check did not finish")
+        return
+    }
+    #expect(disagreed)
+    #expect(result == nil)
+}
+
+
+@Test("Accuracy averages within a target, per-frame error does not, so the second is larger")
+func accuracyAndPerSampleErrorAreDistinct() throws {
+    let observer = NoisyObserver()
+    let model = try #require(
+        GazeModelFitter.best(points: observer.calibration(), geometry: observer.base.geometry)
+    )
+    // The eye-tracking field defines accuracy as the offset of the mean gaze during a
+    // fixation. Judging every 60 Hz frame separately mixes in jitter that no analysis
+    // would ever be exposed to, and reports a larger number for the same tracker.
+    #expect(model.perSampleErrorPoints > model.accuracyPoints)
+}
+
+@Test("The gap between fitted and held-out accuracy shows whether more targets would help")
+func generalisationGapIsReported() throws {
+    let observer = SyntheticObserver()
+    let model = try #require(
+        GazeModelFitter.best(points: observer.calibration(), geometry: observer.geometry)
+    )
+    #expect(model.generalisationGapPoints >= 0)
+    // A noiseless observer is modelled exactly, so there is nothing left to generalise.
+    #expect(model.generalisationGapPoints < 3)
 }

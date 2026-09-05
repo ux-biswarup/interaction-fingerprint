@@ -18,30 +18,37 @@ public enum GazeSource: String, Codable, Sendable, CaseIterable {
 
 /// Shape of the correction.
 ///
-/// The `Offset` variants also solve for the camera's true position relative to the
-/// display. That position is a fixed distance, while the eye's own error is a fixed
-/// angle, and the two are only separable when the calibration data spans more than one
-/// viewing distance. Solving for it beats hardcoding a table of camera placements that
-/// would be wrong for every phone not in the table.
-public enum GazeBasis: String, Codable, Sendable, CaseIterable {
-    /// 1, u, v.
-    case affine
-    /// 1, u, v, and the camera position.
-    case affineOffset
-    /// 1, u, v, u², v², uv.
-    case quadratic
-    /// 1, u, v, u², v², uv, and the camera position.
-    case quadraticOffset
+/// Three independent choices, all decided by cross-validation rather than by assumption:
+///
+/// - `order` 1 or 2. A quadratic can follow the mild curvature that appears towards the
+///   edges of the display, at the cost of twice the parameters.
+/// - `solvesCameraOffset`. Also solves where the camera really sits relative to the
+///   display. That is a fixed distance while the eye's own error is a fixed angle, and the
+///   two only separate when the data spans more than one viewing distance.
+/// - `usesHeadPose`. Adds head yaw and pitch as terms. ARKit's eye estimate degrades as the
+///   head turns away from the camera, and if that degradation is systematic it can be
+///   corrected. Only offered when the head pose actually varied during calibration.
+public struct GazeBasis: Codable, Sendable, Equatable, Hashable {
+    public let order: Int
+    public let solvesCameraOffset: Bool
+    public let usesHeadPose: Bool
 
-    public var solvesCameraOffset: Bool {
-        self == .affineOffset || self == .quadraticOffset
+    public init(order: Int, solvesCameraOffset: Bool, usesHeadPose: Bool) {
+        self.order = order
+        self.solvesCameraOffset = solvesCameraOffset
+        self.usesHeadPose = usesHeadPose
+    }
+
+    public static let allCases: [GazeBasis] = [1, 2].flatMap { order in
+        [false, true].flatMap { offset in
+            [false, true].map { pose in
+                GazeBasis(order: order, solvesCameraOffset: offset, usesHeadPose: pose)
+            }
+        }
     }
 
     var angularTermCount: Int {
-        switch self {
-        case .affine, .affineOffset: 3
-        case .quadratic, .quadraticOffset: 6
-        }
+        (order == 2 ? 6 : 3) + (usesHeadPose ? 2 : 0)
     }
 
     public var parameterCount: Int {
@@ -49,29 +56,26 @@ public enum GazeBasis: String, Codable, Sendable, CaseIterable {
     }
 
     public var label: String {
-        switch self {
-        case .affine: "linear"
-        case .affineOffset: "linear + camera"
-        case .quadratic: "quadratic"
-        case .quadraticOffset: "quadratic + camera"
-        }
+        var parts = [order == 2 ? "quadratic" : "linear"]
+        if solvesCameraOffset { parts.append("camera") }
+        if usesHeadPose { parts.append("pose") }
+        return parts.joined(separator: "+")
     }
 
     /// The terms that make up the corrected gaze angle.
-    func angularTerms(u: Double, v: Double) -> [Double] {
-        switch angularTermCount {
-        case 6: [1, u, v, u * u, v * v, u * v]
-        default: [1, u, v]
+    func angularTerms(u: Double, v: Double, yaw: Double, pitch: Double) -> [Double] {
+        var terms: [Double] = order == 2 ? [1, u, v, u * u, v * v, u * v] : [1, u, v]
+        if usesHeadPose {
+            terms.append(yaw)
+            terms.append(pitch)
         }
+        return terms
     }
 
-    /// One row of the fitting matrix.
-    ///
-    /// The camera position enters as a term in one over the distance, which is what makes
-    /// it linear in the unknowns and separable from the angular terms once the data spans
-    /// two distances.
-    func designRow(u: Double, v: Double, distance: Double) -> [Double] {
-        var row = angularTerms(u: u, v: v)
+    /// One row of the fitting matrix. The camera position enters as a term in one over the
+    /// distance, which keeps it linear in the unknowns.
+    func designRow(u: Double, v: Double, yaw: Double, pitch: Double, distance: Double) -> [Double] {
+        var row = angularTerms(u: u, v: v, yaw: yaw, pitch: pitch)
         if solvesCameraOffset { row.append(-1 / distance) }
         return row
     }
@@ -84,16 +88,25 @@ public struct GazeMeasurement: Sendable, Equatable {
     public let eyeX: Double
     public let eyeY: Double
     public let distance: Double
+    /// Head orientation when this was measured. Carried on the measurement because the
+    /// correction may depend on it, so prediction needs it as well as fitting.
+    public let headYaw: Double
+    public let headPitch: Double
 
-    public init(u: Double, v: Double, eyeX: Double, eyeY: Double, distance: Double) {
+    public init(
+        u: Double, v: Double, eyeX: Double, eyeY: Double, distance: Double,
+        headYaw: Double = 0, headPitch: Double = 0
+    ) {
         self.u = u
         self.v = v
         self.eyeX = eyeX
         self.eyeY = eyeY
         self.distance = distance
+        self.headYaw = headYaw
+        self.headPitch = headPitch
     }
 
-    public init?(_ estimate: GazeRay.Estimate) {
+    public init?(_ estimate: GazeRay.Estimate, headYaw: Double = 0, headPitch: Double = 0) {
         let distance = estimate.viewingDistance
         guard distance > 0.05, distance < 2.0 else { return nil }
         self.init(
@@ -101,7 +114,9 @@ public struct GazeMeasurement: Sendable, Equatable {
             v: estimate.v,
             eyeX: Double(estimate.eye.x),
             eyeY: Double(estimate.eye.y),
-            distance: distance
+            distance: distance,
+            headYaw: headYaw,
+            headPitch: headPitch
         )
     }
 }
@@ -165,19 +180,43 @@ public struct GazeModel: Codable, Sendable, Equatable {
     /// Tikhonov strength chosen by cross-validation. Zero means no shrinkage was needed.
     public let ridge: Double
 
-    /// Mean error on targets held out of the fit, in screen points, where holding out a
-    /// target removes it at *every* viewing distance. This is the honest accuracy figure:
-    /// error measured on the same targets a model was fitted to always flatters it.
-    public let heldOutErrorPoints: Double
-    public let worstHeldOutErrorPoints: Double
+    /// **Accuracy.** Offset between a target and the *mean* estimate while the eyes were on
+    /// it, in screen points, measured on targets held out of the fit.
+    ///
+    /// This is what the eye-tracking field means by accuracy, and what the published ARKit
+    /// figure of 3.18° refers to. Averaging within a target before measuring is the
+    /// definition, not a flattering choice: no analysis ever consumes a single 60 Hz frame.
+    public let accuracyPoints: Double
+    /// The same figure as a visual angle, for direct comparison with the literature.
+    public let accuracyDegrees: Double
+    /// Worst single held-out target, in points. Reveals error concentrated in one corner
+    /// that a mean would hide.
+    public let worstTargetPoints: Double
+    /// Error of each individual frame against its target, held out. Always larger than
+    /// accuracy, because it also carries the frame-to-frame jitter.
+    public let perSampleErrorPoints: Double
+    /// Accuracy on the targets the model was *fitted* to. The gap against `accuracyPoints`
+    /// says whether the correction generalises across the screen or is merely tracing the
+    /// calibration points, which decides whether more targets would help.
+    public let inSampleAccuracyPoints: Double
+    /// Sample-to-sample scatter while the eyes are fixed on one point, in screen points.
+    ///
+    /// The eye-tracking field separates accuracy, how far the average estimate sits from
+    /// the truth, from precision, how much consecutive estimates jitter around that
+    /// average. The distinction decides whether the research is workable: scatter averages
+    /// away over a fixation, bias does not.
+    public let precisionPoints: Double
+    /// Number of individual frames the fit used, not the number of targets.
+    public let sampleCount: Int
     public let targetCount: Int
+    public let meanCalibrationDistance: Double
 
     /// Range of viewing distances the fit actually saw, in metres.
     public let calibratedDistanceRange: ClosedRange<Double>
     public let createdAt: Date
 
-    public func correct(u: Double, v: Double) -> (u: Double, v: Double) {
-        let terms = basis.angularTerms(u: u, v: v)
+    public func correct(u: Double, v: Double, yaw: Double = 0, pitch: Double = 0) -> (u: Double, v: Double) {
+        let terms = basis.angularTerms(u: u, v: v, yaw: yaw, pitch: pitch)
         return (
             u: zip(terms, uCoefficients).reduce(0) { $0 + $1.0 * $1.1 },
             v: zip(terms, vCoefficients).reduce(0) { $0 + $1.0 * $1.1 }
@@ -187,15 +226,25 @@ public struct GazeModel: Codable, Sendable, Equatable {
     /// Where the corrected gaze lands, in nominal camera-space metres, with the solved
     /// camera position already taken out so the result can go straight into `ScreenGeometry`.
     public func screenPlaneHit(for measurement: GazeMeasurement) -> CGPoint {
-        let corrected = correct(u: measurement.u, v: measurement.v)
+        let corrected = correct(
+            u: measurement.u, v: measurement.v,
+            yaw: measurement.headYaw, pitch: measurement.headPitch
+        )
         return CGPoint(
             x: measurement.eyeX + measurement.distance * corrected.u - cameraOffsetX,
             y: measurement.eyeY + measurement.distance * corrected.v - cameraOffsetY
         )
     }
 
+    /// How much of the accuracy figure is the model failing to generalise, rather than a
+    /// limit of the signal. A large gap argues for more calibration targets; a small gap
+    /// means the signal itself is this noisy and more targets will not help.
+    public var generalisationGapPoints: Double {
+        max(accuracyPoints - inSampleAccuracyPoints, 0)
+    }
+
     public var accuracyDescription: String {
-        switch heldOutErrorPoints {
+        switch accuracyPoints {
         case ..<45: "good"
         case ..<90: "usable"
         default: "poor"
@@ -204,9 +253,33 @@ public struct GazeModel: Codable, Sendable, Equatable {
 
     public var summary: String {
         String(
-            format: "%@ · %@%@ · ±%.0f pt",
-            source.label, basis.label, ridge > 0 ? " · shrunk" : "", heldOutErrorPoints
+            format: "%@ · %@%@ · ±%.0f pt · %.2f°",
+            source.label, basis.label, ridge > 0 ? " · shrunk" : "",
+            accuracyPoints, accuracyDegrees
         )
+    }
+
+    /// The part of the error that does not average away, in screen points.
+    ///
+    /// Total error and scatter add in quadrature, so the systematic remainder is what is
+    /// left after removing the scatter. This is the floor on how well any amount of
+    /// averaging can do.
+    public var biasPoints: Double {
+        let total = perSampleErrorPoints * perSampleErrorPoints
+        let scatter = precisionPoints * precisionPoints
+        return (total > scatter ? (total - scatter).squareRoot() : 0)
+    }
+
+    /// Expected accuracy once samples are aggregated into a fixation.
+    ///
+    /// Analysis works on fixations, not raw samples. The scatter shrinks with the square
+    /// root of the sample count while the bias stays put, and the two combine in
+    /// quadrature. This is the number that governs whether two areas of interest can
+    /// actually be told apart.
+    public func fixationErrorPoints(samples: Int) -> Double {
+        guard samples > 1 else { return perSampleErrorPoints }
+        let scatter = precisionPoints / Double(samples).squareRoot()
+        return (biasPoints * biasPoints + scatter * scatter).squareRoot()
     }
 
     /// Solved camera position in millimetres, for the diagnostics readout.
@@ -232,6 +305,9 @@ public enum GazeModelFitter {
     /// Roughly six centimetres of movement at normal holding distances.
     static let minimumInverseDistanceSpread = 0.25
 
+    /// Minimum head rotation range, in radians, before pose terms are offered. About 1.7°.
+    static let minimumHeadPoseSpread = 0.03
+
     /// Fits every combination of gaze source, basis shape and shrinkage, scores each by
     /// cross-validation, and returns them best first.
     ///
@@ -252,10 +328,20 @@ public enum GazeModelFitter {
             guard let low = distances.min(), let high = distances.max() else { continue }
             let inverseSpread = (1 / low) - (1 / high)
 
+            let yaws = usable.compactMap { $0.measurement(for: source)?.headYaw }
+            let pitches = usable.compactMap { $0.measurement(for: source)?.headPitch }
+            let poseSpread = max(
+                (yaws.max() ?? 0) - (yaws.min() ?? 0),
+                (pitches.max() ?? 0) - (pitches.min() ?? 0)
+            )
+
             for basis in GazeBasis.allCases {
                 // Solving for the camera position needs real distance variation, otherwise
                 // it is indistinguishable from a constant angular offset.
                 if basis.solvesCameraOffset, inverseSpread < minimumInverseDistanceSpread { continue }
+                // Head pose terms are only identifiable if the head actually moved. Fitting
+                // them to a constant would just add noise dressed up as signal.
+                if basis.usesHeadPose, poseSpread < minimumHeadPoseSpread { continue }
                 // Leaving a group out must still leave the fit over-determined.
                 let smallest = groups.count - 1
                 guard usable.count - (usable.count / max(groups.count, 1)) >= basis.parameterCount + 1,
@@ -270,6 +356,7 @@ public enum GazeModelFitter {
                         )
                     else { continue }
 
+                    let meanDistance = distances.reduce(0, +) / Double(distances.count)
                     candidates.append(
                         Candidate(
                             model: GazeModel(
@@ -280,9 +367,17 @@ public enum GazeModelFitter {
                                 cameraOffsetX: solution.offsetX,
                                 cameraOffsetY: solution.offsetY,
                                 ridge: ridge,
-                                heldOutErrorPoints: score.mean,
-                                worstHeldOutErrorPoints: score.worst,
-                                targetCount: usable.count,
+                                accuracyPoints: score.accuracy,
+                                accuracyDegrees: degrees(
+                                    points: score.accuracy, distance: meanDistance, geometry: geometry
+                                ),
+                                worstTargetPoints: score.worst,
+                                perSampleErrorPoints: score.perSample,
+                                inSampleAccuracyPoints: 0,
+                                precisionPoints: 0,
+                                sampleCount: usable.count,
+                                targetCount: groups.count,
+                                meanCalibrationDistance: meanDistance,
                                 calibratedDistanceRange: low...high,
                                 createdAt: Date()
                             ),
@@ -294,14 +389,102 @@ public enum GazeModelFitter {
             }
         }
 
-        return candidates.sorted { $0.model.heldOutErrorPoints < $1.model.heldOutErrorPoints }
+        return candidates.sorted { $0.model.accuracyPoints < $1.model.accuracyPoints }
     }
 
     public static func best(points: [GazeCalibrationPoint], geometry: ScreenGeometry) -> GazeModel? {
-        rank(points: points, geometry: geometry).first?.model
+        guard let winner = rank(points: points, geometry: geometry).first?.model else { return nil }
+        let inSample = accuracy(of: winner, on: points, geometry: geometry)?.mean ?? 0
+        return GazeModel(
+            source: winner.source,
+            basis: winner.basis,
+            uCoefficients: winner.uCoefficients,
+            vCoefficients: winner.vCoefficients,
+            cameraOffsetX: winner.cameraOffsetX,
+            cameraOffsetY: winner.cameraOffsetY,
+            ridge: winner.ridge,
+            accuracyPoints: winner.accuracyPoints,
+            accuracyDegrees: winner.accuracyDegrees,
+            worstTargetPoints: winner.worstTargetPoints,
+            perSampleErrorPoints: winner.perSampleErrorPoints,
+            inSampleAccuracyPoints: inSample,
+            precisionPoints: precision(of: winner, on: points, geometry: geometry),
+            sampleCount: winner.sampleCount,
+            targetCount: winner.targetCount,
+            meanCalibrationDistance: winner.meanCalibrationDistance,
+            calibratedDistanceRange: winner.calibratedDistanceRange,
+            createdAt: winner.createdAt
+        )
     }
 
-    /// Mean and worst error, in screen points, of a model applied to given points.
+    /// Sample-to-sample scatter while the eyes were fixed on one target, in screen points.
+    ///
+    /// Measured as the spread of estimates around each target's own centroid, so it is
+    /// independent of how well the model is aimed. The median across targets is taken
+    /// rather than the mean, so one unsettled target cannot dominate.
+    static func precision(
+        of model: GazeModel,
+        on points: [GazeCalibrationPoint],
+        geometry: ScreenGeometry
+    ) -> Double {
+        var perTarget: [Double] = []
+
+        for group in Set(points.map(\.targetIndex)).sorted() {
+            let predictions = points
+                .filter { $0.targetIndex == group }
+                .compactMap { $0.measurement(for: model.source) }
+                .map { geometry.normalised(fromCameraMetres: model.screenPlaneHit(for: $0)) }
+            guard predictions.count >= 4 else { continue }
+
+            let centroid = CGPoint(
+                x: predictions.map { Double($0.x) }.reduce(0, +) / Double(predictions.count),
+                y: predictions.map { Double($0.y) }.reduce(0, +) / Double(predictions.count)
+            )
+            let squared = predictions.reduce(0.0) { total, point in
+                let d = distanceInPoints(point, centroid, geometry: geometry)
+                return total + d * d
+            }
+            perTarget.append((squared / Double(predictions.count)).squareRoot())
+        }
+
+        guard !perTarget.isEmpty else { return 0 }
+        let sorted = perTarget.sorted()
+        return sorted[sorted.count / 2]
+    }
+
+    /// **Accuracy** of a model on given points: for each target, the offset between the
+    /// target and the mean estimate while the eyes were on it.
+    ///
+    /// This is the eye-tracking field's definition, and the reason it averages first is
+    /// that a single 60 Hz sample is not what any analysis ever uses.
+    public static func accuracy(
+        of model: GazeModel,
+        on points: [GazeCalibrationPoint],
+        geometry: ScreenGeometry
+    ) -> (mean: Double, worst: Double)? {
+        var perTarget: [Double] = []
+
+        for group in Set(points.map(\.targetIndex)).sorted() {
+            let group = points.filter { $0.targetIndex == group }
+            let predictions = group
+                .compactMap { $0.measurement(for: model.source) }
+                .map { geometry.normalised(fromCameraMetres: model.screenPlaneHit(for: $0)) }
+            guard !predictions.isEmpty, let target = group.first?.target else { continue }
+
+            let centroid = CGPoint(
+                x: predictions.map { Double($0.x) }.reduce(0, +) / Double(predictions.count),
+                y: predictions.map { Double($0.y) }.reduce(0, +) / Double(predictions.count)
+            )
+            let error = distanceInPoints(centroid, target, geometry: geometry)
+            if error.isFinite { perTarget.append(error) }
+        }
+
+        guard !perTarget.isEmpty else { return nil }
+        return (perTarget.reduce(0, +) / Double(perTarget.count), perTarget.max() ?? 0)
+    }
+
+    /// Mean and worst error, in screen points, of a model applied to given points, judged
+    /// one frame at a time.
     public static func error(
         of model: GazeModel,
         on points: [GazeCalibrationPoint],
@@ -348,7 +531,13 @@ public enum GazeModelFitter {
         for point in points {
             guard let measurement = point.measurement(for: source) else { continue }
             let targetMetres = geometry.cameraMetres(fromNormalised: point.target)
-            design.append(basis.designRow(u: measurement.u, v: measurement.v, distance: measurement.distance))
+            design.append(
+                basis.designRow(
+                    u: measurement.u, v: measurement.v,
+                    yaw: measurement.headYaw, pitch: measurement.headPitch,
+                    distance: measurement.distance
+                )
+            )
             requiredU.append((Double(targetMetres.x) - measurement.eyeX) / measurement.distance)
             requiredV.append((Double(targetMetres.y) - measurement.eyeY) / measurement.distance)
         }
@@ -379,10 +568,12 @@ public enum GazeModelFitter {
         basis: GazeBasis,
         geometry: ScreenGeometry,
         ridge: Double
-    ) -> (mean: Double, worst: Double)? {
+    ) -> (accuracy: Double, worst: Double, perSample: Double)? {
         var total = 0.0
         var worst = 0.0
         var count = 0
+        var accuracyTotal = 0.0
+        var accuracyCount = 0
 
         for group in groups {
             let training = points.filter { $0.targetIndex != group }
@@ -402,21 +593,38 @@ public enum GazeModelFitter {
                 cameraOffsetX: solution.offsetX,
                 cameraOffsetY: solution.offsetY,
                 ridge: ridge,
-                heldOutErrorPoints: 0,
-                worstHeldOutErrorPoints: 0,
-                targetCount: training.count,
+                accuracyPoints: 0,
+                accuracyDegrees: 0,
+                worstTargetPoints: 0,
+                perSampleErrorPoints: 0,
+                inSampleAccuracyPoints: 0,
+                precisionPoints: 0,
+                sampleCount: training.count,
+                targetCount: 0,
+                meanCalibrationDistance: 0,
                 calibratedDistanceRange: 0.1...1.0,
                 createdAt: Date()
             )
 
             guard let score = error(of: fold, on: heldOut, geometry: geometry) else { return nil }
             total += score.mean * Double(heldOut.count)
-            worst = max(worst, score.worst)
             count += heldOut.count
+
+            guard let centroid = accuracy(of: fold, on: heldOut, geometry: geometry) else { return nil }
+            accuracyTotal += centroid.mean
+            accuracyCount += 1
+            worst = max(worst, centroid.worst)
         }
 
-        guard count > 0 else { return nil }
-        return (total / Double(count), worst)
+        guard count > 0, accuracyCount > 0 else { return nil }
+        return (accuracyTotal / Double(accuracyCount), worst, total / Double(count))
+    }
+
+    /// Converts a screen error in points into the visual angle it subtends at the eye.
+    static func degrees(points: Double, distance: Double, geometry: ScreenGeometry) -> Double {
+        guard distance > 0, geometry.pointSize.width > 0 else { return 0 }
+        let metresPerPoint = Double(geometry.physicalSize.width) / Double(geometry.pointSize.width)
+        return atan(points * metresPerPoint / distance) * 180 / .pi
     }
 
     static func distanceInPoints(_ a: CGPoint, _ b: CGPoint, geometry: ScreenGeometry) -> Double {
