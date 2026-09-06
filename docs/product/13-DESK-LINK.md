@@ -33,6 +33,9 @@ on the desktop and so that no file ever has to be copied off the phone by hand.
   bounded (four thousand messages); if the desk is unreachable for long the oldest live
   batches are discarded, and the complete session arrives by upload when the session ends
   and the link is back.
+- Known, cosmetic: at connect the desk sometimes logs two sockets from the phone, one per
+  IPv6 address, and one closes within a second. Nothing is duplicated on disk, since
+  sessions are keyed by id, but the cause is not yet pinned down.
 - It does not decide anything. The dashboard shows numbers; the numbers are the ones
   defined in `12-FINGERPRINT-FEATURES.md`; nothing on it names a state of mind.
 
