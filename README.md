@@ -12,6 +12,12 @@ The project uses an iPhone's **TrueDepth camera + ARKit** as a sensing platform,
 
 Built and documented in the open by [Biswarup Mondal](https://github.com/ux-biswarup).
 
+```text
+Setup ●   Sensing ●   Instrumentation ●   Fingerprint ●   Study ◐   Modelling ○   Adaptive ○   Agentic ○   Artifact ○   Paper ○
+```
+
+**Status, September 2026.** Measurement and analysis are working. Evidence so far: seven trustworthy sessions from one participant, with gaze accuracy and within-person stability measured and documented. **Next milestone:** the repeated-measures study across a few participants. Each dot is a phase in [`07-ROADMAP.md`](docs/product/07-ROADMAP.md) and is filled only when that phase's exit is recorded there.
+
 ![The desk dashboard showing one recorded session: the record card with participant, condition, calibration and task outcome; the phone screen with the session's scan path; the fingerprint numbers, dwell by area and gaze transitions](docs/images/dashboard-session.png)
 
 *The desk dashboard on the Mac: a recorded session with its record card, scan path, fingerprint, dwell by area and gaze transitions. Sessions stream from the phone over the local network as they are recorded.*
