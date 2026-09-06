@@ -154,9 +154,13 @@ def gaze_before_tap(gaze: pd.DataFrame, taps: pd.DataFrame, px, py, lead=(0.6, 0
     A person looks at what they are about to tap, so this is ground truth for free viewing
     that the calibration grid never sees.
     """
+    px, py = np.asarray(px, dtype=float), np.asarray(py, dtype=float)
+    finite = np.isfinite(px) & np.isfinite(py)
     errs = []
     for _, t in taps.iterrows():
-        w = ((gaze["timestamp"] > t["timestamp"] - lead[0]) & (gaze["timestamp"] <= t["timestamp"] - lead[1])).values
+        # Rows the app recorded without a coordinate (no fresh reading from the source in
+        # force) are skipped rather than allowed to turn the median into NaN.
+        w = ((gaze["timestamp"] > t["timestamp"] - lead[0]) & (gaze["timestamp"] <= t["timestamp"] - lead[1])).values & finite
         if w.sum() >= 3:
             errs.append(geo.points_error(np.median(px[w]), np.median(py[w]), t["x"], t["y"]))
     return (float(np.median(errs)) if errs else float("nan")), len(errs)

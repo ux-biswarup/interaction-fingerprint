@@ -73,3 +73,13 @@ def test_gaze_before_tap_uses_the_window_before_the_tap():
     taps = pd.DataFrame(dict(timestamp=[1.0], x=[0.5], y=[0.5 + 100 / geo.POINT_HEIGHT]))
     err, n = gz.gaze_before_tap(gaze, taps, px, py)
     assert n == 1 and abs(err - 100) < 1e-6
+
+
+def test_gaze_before_tap_ignores_rows_without_a_coordinate():
+    gaze = pd.DataFrame(dict(timestamp=np.arange(0, 2, 1 / 60)))
+    px = np.full(len(gaze), 0.5)
+    py = np.full(len(gaze), 0.5)
+    px[30:40] = np.nan  # a stretch inside the window with no recorded gaze
+    taps = pd.DataFrame(dict(timestamp=[1.0], x=[0.5], y=[0.5 + 100 / geo.POINT_HEIGHT]))
+    err, n = gz.gaze_before_tap(gaze, taps, px, py)
+    assert n == 1 and abs(err - 100) < 1e-6
