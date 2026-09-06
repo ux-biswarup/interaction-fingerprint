@@ -30,6 +30,18 @@ For every gaze source in the calibration file it prints:
   model is replayed on the session's raw rows. The tap figure is the one that matters; the
   grid has been wrong about free viewing every time it disagreed.
 
+## The desk: live dashboard and automatic transfer
+
+```bash
+pip3 install --user aiohttp zeroconf           # once
+python3 Analysis/dashboard/server.py --open    # http://localhost:8765
+```
+
+The phone finds the desk on the local network by itself, streams every event while a
+session records, and uploads whatever it recorded while away. The desk writes the same
+files the app exports into `Data/` and shows the live gaze, taps and fingerprint. See
+`docs/product/13-DESK-LINK.md`.
+
 ## Compute a session's fingerprint (Phase 3)
 
 ```bash
@@ -67,6 +79,9 @@ The dataset is never copied into this repository. See `docs/product/11-LEARNED-E
 Analysis/
 ├── evaluate_gaze.py        # judge a calibration and its sources against taps
 ├── fingerprint_session.py  # the Interaction Fingerprint of a session
+├── dashboard/
+│   ├── server.py           # the desk: receives from the phone, serves the dashboard
+│   └── static/             # the dashboard page, script and styles
 ├── fingerprint/
 │   ├── load.py             # sessions, gaze rows, taps, calibration frames
 │   ├── geometry.py         # the display geometry the app uses

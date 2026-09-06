@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into the generated Info.plist (GENERATE_INFOPLIST_FILE = YES, INFOPLIST_FILE in
+	     Shared.xcconfig). Only keys with no INFOPLIST_KEY_ build setting live here. Excluded
+	     from the target's resources in the project file, or it would be copied into the
+	     bundle as a second plist. -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_ifp._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>The app looks for the researcher's Mac on this Wi-Fi to show recordings live and copy them over. Nothing leaves the local network.</string>
+</dict>
+</plist>

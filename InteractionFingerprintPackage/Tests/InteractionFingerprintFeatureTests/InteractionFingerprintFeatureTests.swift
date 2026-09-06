@@ -1554,3 +1554,36 @@ func gazeOffAreaCarriesTheCurrentScreen() throws {
     #expect(gaze[0].screen == ScreenID.productDetail.rawValue && gaze[0].productID == "sku_101" && gaze[0].target == nil)
     #expect(gaze[1].screen == ScreenID.productList.rawValue && gaze[1].productID == nil)
 }
+
+
+// MARK: - Desk link
+
+@Test("The wire envelope wraps a payload's JSON verbatim under its type")
+func deskEnvelopeWrapsPayloadVerbatim() throws {
+    let payload = Data(#"{"a":1,"b":[2,3]}"#.utf8)
+    let envelope = DeskMessage.envelope(type: "events", payload: payload)
+    let decoded = try #require(JSONSerialization.jsonObject(with: envelope) as? [String: Any])
+    #expect(decoded["type"] as? String == "events")
+    let inner = try #require(decoded["payload"] as? [String: Any])
+    #expect(inner["a"] as? Int == 1)
+    // A missing payload is an explicit null, never a broken document.
+    let empty = try #require(JSONSerialization.jsonObject(with: DeskMessage.envelope(type: "hello", payload: nil)) as? [String: Any])
+    #expect(empty["payload"] is NSNull)
+    // Uploads carry the file body as it is, with its kind and identity beside it.
+    let upload = try #require(JSONSerialization.jsonObject(with: DeskMessage.upload(kind: "session", id: "ABC", body: payload)) as? [String: Any])
+    #expect(upload["type"] as? String == "upload" && upload["kind"] as? String == "session" && upload["id"] as? String == "ABC")
+    #expect((upload["payload"] as? [String: Any])?["a"] as? Int == 1)
+}
+
+@Test("The recorder hands every appended event to its sink")
+@MainActor
+func recorderSinkSeesEveryEvent() throws {
+    let recorder = EventRecorder()
+    var seen: [String] = []
+    recorder.sink = { seen.append($0.event) }
+    recorder.start(session: makeSession())
+    recorder.screenAppeared(.productList)
+    recorder.recordGaze(makeGaze(x: 0.5, y: 0.5, at: 10), screen: .productList, area: nil)
+    _ = recorder.stop()
+    #expect(seen == [EventKind.sessionStart.rawValue, EventKind.screenAppear.rawValue, EventKind.gaze.rawValue, EventKind.sessionEnd.rawValue])
+}

@@ -10,6 +10,8 @@ import SwiftUI
 /// been stored.
 public struct StudySessionView: View {
     let tracking: FaceTrackingSession
+    /// The live link to the researcher's Mac, when the app has one.
+    let desk: DeskLink?
     let onFinish: (SessionExporter.Export?) -> Void
 
     @State private var recorder = EventRecorder()
@@ -23,8 +25,13 @@ public struct StudySessionView: View {
     /// of rows that say the same thing.
     private let ambientInterval: TimeInterval = 2
 
-    public init(tracking: FaceTrackingSession, onFinish: @escaping (SessionExporter.Export?) -> Void) {
+    public init(
+        tracking: FaceTrackingSession,
+        desk: DeskLink? = nil,
+        onFinish: @escaping (SessionExporter.Export?) -> Void
+    ) {
         self.tracking = tracking
+        self.desk = desk
         self.onFinish = onFinish
     }
 
@@ -35,6 +42,7 @@ public struct StudySessionView: View {
                     .coordinateSpace(.named(InstrumentationSpace.root))
                     .onPreferenceChange(AreaOfInterestKey.self) { areas in
                         registry.update(areas)
+                        desk?.areasChanged(areas, viewport: proxy.size)
                     }
 
                 TouchObserver { touch in
@@ -130,7 +138,9 @@ public struct StudySessionView: View {
             calibration: tracking.model,
             eyeLaterality: EyeLateralityStore.load()
         )
+        recorder.sink = desk.map { desk in { event in desk.record(event) } }
         recorder.start(session: record)
+        desk?.sessionStarted(record)
         if tracking.state != .running { tracking.start() }
     }
 
@@ -160,6 +170,8 @@ public struct StudySessionView: View {
         }
         do {
             let export = try SessionExporter.write(session: result.session, events: result.events)
+            // After the file exists, so a desk that missed the stream can ask for it.
+            desk?.sessionEnded(result.session)
             onFinish(export)
         } catch {
             exportError = error.localizedDescription

@@ -17,6 +17,7 @@ public struct ContentView: View {
     @State private var previewSummary: String?
     /// Show the camera's view of the face instead of the plain screen. Debug only.
     @State private var showsCamera = false
+    @State private var desk = DeskLink()
     @Environment(\.displayScale) private var displayScale
     @Environment(\.scenePhase) private var scenePhase
 
@@ -25,7 +26,12 @@ public struct ContentView: View {
     public var body: some View {
         GeometryReader { proxy in
             content
-                .onAppear { syncGeometry(proxy.size) }
+                .onAppear {
+                    syncGeometry(proxy.size)
+                    // Not in the preview modes the UI tests drive: a local-network prompt
+                    // there would have nothing to answer it.
+                    if !isStimulusPreview { desk.start() }
+                }
                 .onChange(of: proxy.size) { _, size in syncGeometry(size) }
         }
         .ignoresSafeArea()
@@ -41,6 +47,8 @@ public struct ContentView: View {
                 calibration = nil
                 lateralityCheck = nil
                 if !isRunningStudy { tracking.stop() }
+            } else if !isStimulusPreview {
+                desk.resume()
             }
         }
     }
@@ -78,7 +86,7 @@ public struct ContentView: View {
                     : nil
             )
         } else if isRunningStudy {
-            StudySessionView(tracking: tracking) { export in
+            StudySessionView(tracking: tracking, desk: desk) { export in
                 isRunningStudy = false
                 if let export { lastExport = export }
             }
@@ -111,9 +119,13 @@ public struct ContentView: View {
                     if case .finished(let result) = run.phase {
                         // Kept for offline analysis of where the fit is weak. Failure to
                         // write it must not block accepting a working calibration.
+                        let now = Date()
                         _ = try? SessionExporter.writeCalibration(
-                            model: model, points: result.points, failedTargets: result.failedTargets
+                            model: model, points: result.points, failedTargets: result.failedTargets, at: now
                         )
+                        desk.calibrationSaved(SessionExporter.CalibrationDocument(
+                            createdAt: now, model: model, failedTargets: result.failedTargets, points: result.points
+                        ))
                     }
                     calibration = nil
                 },
@@ -382,6 +394,22 @@ public struct ContentView: View {
             Text(cameraStatus)
                 .font(.system(size: 10))
                 .foregroundStyle(Instrument.paperDim)
+
+            // The live link to the Mac. A readout and a switch, nothing else: it finds the
+            // desk by itself and copies over whatever the desk lacks.
+            HStack(spacing: 8) {
+                Toggle(isOn: $desk.isEnabled) { EmptyView() }
+                    .labelsHidden()
+                    .tint(Instrument.reticle)
+                    .scaleEffect(0.7)
+                    .accessibilityLabel("Stream to the desk")
+                    .accessibilityIdentifier("desk_link_toggle")
+                Text(desk.isEnabled ? "Desk · \(desk.state.label)" + (desk.sentEvents > 0 ? " · \(desk.sentEvents) events" : "") : "Desk · off")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Instrument.paperDim)
+                    .accessibilityIdentifier("desk_link_status")
+            }
+            .padding(.top, 2)
         }
         .padding(.bottom, 30)
     }

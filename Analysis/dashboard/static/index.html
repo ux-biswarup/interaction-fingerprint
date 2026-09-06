@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Interaction Fingerprint · Desk</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">Interaction Fingerprint <span class="desk">desk</span></div>
+  <div class="status">
+    <span id="phone" class="pill off">phone: not connected</span>
+    <span id="server" class="pill off">desk: connecting</span>
+    <span id="session" class="pill">no live session</span>
+  </div>
+</header>
+
+<main>
+  <section class="live" id="livePanel">
+    <div class="column phone-column">
+      <h2>Screen <span class="sub" id="screenLabel">—</span></h2>
+      <canvas id="phoneCanvas" width="393" height="852"></canvas>
+      <div class="readouts" id="readouts">
+        <div><b id="rate">—</b><span>Hz</span></div>
+        <div><b id="distance">—</b><span>cm</span></div>
+        <div><b id="quality">—</b><span>quality</span></div>
+        <div><b id="onDisplay">—</b><span>on display</span></div>
+        <div><b id="elapsed">—</b><span>elapsed</span></div>
+        <div><b id="events">—</b><span>events</span></div>
+      </div>
+      <div class="shapes" id="shapes"></div>
+    </div>
+
+    <div class="column fingerprint-column">
+      <h2 id="fpTitle">Fingerprint <span class="sub">live, recomputed every 2 s</span></h2>
+      <div class="grid" id="fpNumbers"></div>
+      <h3>Dwell by area <span class="sub">from fixations · seconds</span></h3>
+      <div class="bars" id="dwellBars"></div>
+      <h3>Transitions <span class="sub">from row to column</span></h3>
+      <div id="transitions" class="matrix"></div>
+      <h3>Taps <span class="sub">distance from gaze to the tapped element</span></h3>
+      <table id="tapTable" class="taps"><thead><tr><th>screen</th><th>target</th><th>press ms</th><th>element pt</th><th>first look s</th><th>hesitation s</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="column log-column">
+      <h2>Events</h2>
+      <ul id="log" class="log"></ul>
+      <h2>Sessions <span class="sub" id="sessionCount"></span></h2>
+      <p class="hint">Click a session to inspect it. Tick two to compare. <a href="#" id="backToLive" class="hidden">back to live</a></p>
+      <table id="sessionTable" class="sessions"><thead><tr><th></th><th>started</th><th>length</th><th>fix/min</th><th>taps</th><th>looked</th><th>blink</th></tr></thead><tbody></tbody></table>
+      <div id="compare" class="compare hidden"></div>
+    </div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

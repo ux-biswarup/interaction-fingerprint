@@ -84,7 +84,10 @@ Status, 6 September 2026: first pass built and run on the two same-calibration s
 `Analysis/fingerprint_session.py`; definitions with units in `12-FINGERPRINT-FEATURES.md`,
 which also records what the first two fingerprints look like and the two instrumentation
 gaps they exposed (off-area gaze rows carried no screen; per-sample area attribution
-flickers at borders and inflates revisits fivefold). Visualisation not started.
+flickers at borders and inflates revisits fivefold). Visualisation: the desk dashboard
+(`13-DESK-LINK.md`) shows a session live, the gaze on the screen layout with fixations and
+taps, dwell bars, the transition matrix and the fingerprint numbers, and compares sessions
+side by side; recordings now reach `Data/` without anyone copying files.
 
 ## Phase 4 — Exploratory study
 Control condition, tasks, 8–12 participants, qualitative + quantitative analysis.

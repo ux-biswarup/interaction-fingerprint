@@ -26,6 +26,10 @@ public final class EventRecorder {
 
     public var eventCount: Int { events.count }
 
+    /// Called with every event as it is appended, for the desk link. The recorder's own
+    /// buffer stays the record; the sink is best effort.
+    public var sink: ((FingerprintEvent) -> Void)?
+
     private var sequence = 0
     private var overflowed = false
     private var lastScrollAt: TimeInterval?
@@ -320,13 +324,12 @@ public final class EventRecorder {
             overflowed = true
             // Recorded, not hidden. A gap that analysis cannot see is far worse than one
             // it can exclude.
-            events.append(
-                FingerprintEvent(
-                    sequence: sequence, timestamp: SessionClock.now, event: .bufferOverflow
-                )
-            )
+            let overflow = FingerprintEvent(sequence: sequence, timestamp: SessionClock.now, event: .bufferOverflow)
+            events.append(overflow)
+            sink?(overflow)
             return
         }
         events.append(event)
+        sink?(event)
     }
 }

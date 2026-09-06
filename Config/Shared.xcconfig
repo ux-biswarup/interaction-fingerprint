@@ -26,6 +26,9 @@ TARGETED_DEVICE_FAMILY = 1
 // Info PLIST
 // ==========================================
 GENERATE_INFOPLIST_FILE = YES
+// Keys with no INFOPLIST_KEY_ setting (Bonjour service types for the desk link) are merged
+// from this file. See docs/product/13-DESK-LINK.md.
+INFOPLIST_FILE = Config/InteractionFingerprint-Info.plist
 // Portrait only. Gaze is projected with a fixed orientation and areas of interest
 // are matched against a fixed layout; rotation mid-session would invalidate both.
 INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait

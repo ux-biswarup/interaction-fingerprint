@@ -31,6 +31,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Debug.xcconfig,
+				"InteractionFingerprint-Info.plist",
 				Release.xcconfig,
 				Shared.xcconfig,
 				Tests.xcconfig,
