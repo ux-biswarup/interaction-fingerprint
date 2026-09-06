@@ -34,7 +34,10 @@ h3 span { font-weight: 400; color: var(--text-3); margin-left: 6px; }
 .live-text { display: flex; flex-direction: column; }
 .live-title { font-weight: 600; }
 .live-sub { font-size: 11px; color: var(--text-3); }
-.sessions { margin-top: 14px; }
+.search { width: 100%; margin-top: 14px; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--hair); background: rgba(255,255,255,0.05); color: var(--text); outline: none; -webkit-appearance: none; }
+.search:focus { border-color: rgba(245,196,0,0.5); }
+.search::placeholder { color: var(--text-3); }
+.sessions { margin-top: 4px; }
 .group { margin-top: 14px; }
 .group-title { display: flex; justify-content: space-between; padding: 0 10px 6px; font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; }
 .session { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; text-align: left; background: none; border: 1px solid transparent; border-radius: 10px; padding: 8px 10px; cursor: pointer; }

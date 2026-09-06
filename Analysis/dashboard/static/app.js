@@ -102,15 +102,26 @@ function quality(s) {
   return share >= 0.4 ? "good" : share >= 0.2 ? "poor" : "bad";
 }
 
+function searchText(s) {
+  const when = s.startedAt ? new Date(s.startedAt * 1000) : null;
+  return [s.participant, describeCondition(s.condition), s.condition ? "" : "free", s.task ? (s.task.correct ? "correct" : s.task.selected ? "wrong" : s.task.timedOut ? "timed out" : "") : "",
+          when && when.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }), when && when.toLocaleTimeString(),
+          s.id, (s.device || {}).model, (s.calibration || {}).source].filter(Boolean).join(" ").toLowerCase();
+}
+
 function renderSidebar() {
+  const query = ($("search").value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = state.sessions.filter((s) => { const text = searchText(s); return query.every((q) => text.includes(q)); });
   const groups = new Map();
-  for (const s of state.sessions) {
+  for (const s of shown) {
     const key = s.participant || (s.condition ? "unlabelled" : "free recordings");
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(s);
   }
-  const order = [...groups.keys()].sort((a, b) => (a === "free recordings") - (b === "free recordings") || a.localeCompare(b));
-  $("sessionList").innerHTML = order.map((key) => {
+  // Whoever recorded most recently comes first, so the newest session is always at the top.
+  const latest = (key) => Math.max(...groups.get(key).map((s) => s.startedAt || 0));
+  const order = [...groups.keys()].sort((a, b) => latest(b) - latest(a));
+  $("sessionList").innerHTML = (shown.length === 0 && state.sessions.length ? '<div class="empty">No sessions match.</div>' : "") + order.map((key) => {
     const list = groups.get(key).slice().sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
     return `<div class="group"><div class="group-title"><span>${key}</span><span>${list.length}</span></div>${list.map((s) => {
       const when = s.startedAt ? new Date(s.startedAt * 1000).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" }) : s.id.slice(0, 8);
@@ -119,7 +130,7 @@ function renderSidebar() {
         <span class="when">${day} · ${when}</span><span class="len">${fmtTime(s.duration_s || 0)}</span>
         <span class="what"><span class="q ${quality(s)}"></span>${describeCondition(s.condition) || "free session"}${s.task ? (s.task.correct ? " · correct" : s.task.timedOut ? " · timed out" : "") : ""}</span>
       </button>`; }).join("")}</div>`;
-  }).join("") || '<div class="empty">No sessions yet. They appear here as the phone records or uploads them.</div>';
+  }).join("") || (state.sessions.length ? "" : '<div class="empty">No sessions yet. They appear here as the phone records or uploads them.</div>');
   $("sessionList").querySelectorAll(".session").forEach((b) => b.addEventListener("click", () => openSession(b.dataset.id)));
   const select = $("compareSelect");
   const current = select.value;
@@ -193,7 +204,7 @@ function summaryFromLive() {
 
 function renderRecord(s) {
   const el = $("record");
-  if (!s) { el.innerHTML = '<div class="cell"><div class="k">Record</div><div class="v">—</div><div class="s">Start a session on the phone, or choose one from the left.</div></div>'; return; }
+  if (!s) { el.innerHTML = '<div class="cell" style="grid-column: 1 / -1"><div class="k">Record</div><div class="v">—</div><div class="s">Start a session on the phone, or choose one from the left.</div></div>'; return; }
   const f = s.flat || {}, c = s.condition || {}, cal = s.calibration, dev = s.device || {};
   const share = f["fixation.share_of_tracked"];
   const cells = [
@@ -373,4 +384,5 @@ function tick() {
 
 function fmtTime(s) { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
 
+$("search").addEventListener("input", renderSidebar);
 connect(); requestAnimationFrame(draw); setInterval(tick, 500); renderLive();
