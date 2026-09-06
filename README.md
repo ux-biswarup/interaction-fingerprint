@@ -12,6 +12,10 @@ The project uses an iPhone's **TrueDepth camera + ARKit** as a sensing platform,
 
 Built and documented in the open by [Biswarup Mondal](https://github.com/ux-biswarup).
 
+![The desk dashboard showing one recorded session: the record card with participant, condition, calibration and task outcome; the phone screen with the session's scan path; the fingerprint numbers, dwell by area and gaze transitions](docs/images/dashboard-session.png)
+
+*The desk dashboard on the Mac: a recorded session with its record card, scan path, fingerprint, dwell by area and gaze transitions. Sessions stream from the phone over the local network as they are recorded.*
+
 ---
 
 ## The research question
@@ -262,6 +266,10 @@ A session with less than approximately **40% of tracked time in fixations** can 
 
 A useful Interaction Fingerprint therefore needs a **quality gate before interpretation**.
 
+![Within-person spread of every feature across seven sessions: fixation duration and rate near the top with the smallest spread, hand, scroll, blink and head features below with larger spread; beside it a heatmap of each session against the median](docs/images/stability.png)
+
+*Within-person spread of each feature over seven sessions of one participant (left, coefficient of variation; yellow under 0.2) and each session against the median of all (right). Produced by `Analysis/fingerprint_report.py`.*
+
 ---
 
 # The current research hypothesis
@@ -307,6 +315,10 @@ Product
 ```
 
 This creates a controlled environment in which traditional analytics can eventually be compared against the richer Interaction Fingerprint.
+
+![A one-page fingerprint card for one session: scan paths on the list and detail screens with fixations as circles and taps as crosses, dwell by area as bars, and the gaze transition graph between areas](docs/images/fingerprint-card.png)
+
+*One session's fingerprint card: scan paths on the list and detail screens (circles are fixations sized by duration, crosses are taps, yellow when the gaze was on the element), dwell by area, and the transition graph between areas.*
 
 The next phase is a repeated-measures study across multiple participants, with task, pace, posture and lighting deliberately controlled.
 
@@ -493,6 +505,10 @@ http://localhost:8765
 ```
 
 The iPhone discovers the Mac over the local network using Bonjour and streams sessions using WebSocket.
+
+![The dashboard in its live state: the sidebar lists participants and their sessions newest first with a search field, the main area waits for the phone to record](docs/images/dashboard-live.png)
+
+*The dashboard waiting for a recording: participants and sessions in the sidebar, newest first, with search; the live view fills as soon as the phone starts.*
 
 ### 4. Analyse a session
 
