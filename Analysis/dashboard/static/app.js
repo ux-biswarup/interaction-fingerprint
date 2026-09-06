@@ -81,7 +81,13 @@ function draw() {
     ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.font = "10px ui-monospace, Menlo, monospace";
     ctx.fillText(a.target + (a.productID ? " " + a.productID.replace("sku_", "#") : ""), a.x * W + 4, a.y * H + 11);
   }
-  const fp = state.fingerprint;
+  const fp = state.viewing ? state.viewFingerprint : state.fingerprint;
+  if (state.viewing && fp) {
+    for (const t of (fp.tap_list || [])) {
+      ctx.strokeStyle = t.element_distance_pt === 0 ? "#c98f00" : "#c04a2f"; ctx.lineWidth = 2; const x = t.x * W, y = t.y * H;
+      ctx.beginPath(); ctx.moveTo(x - 8, y - 8); ctx.lineTo(x + 8, y + 8); ctx.moveTo(x + 8, y - 8); ctx.lineTo(x - 8, y + 8); ctx.stroke();
+    }
+  }
   if (fp && fp.fixation_list) {
     for (const f of fp.fixation_list.slice(-40)) {
       const r = 6 + Math.min(f.duration_s, 1.5) * 16;
@@ -89,12 +95,12 @@ function draw() {
       ctx.fillStyle = "rgba(106,169,255,0.18)"; ctx.fill(); ctx.strokeStyle = "rgba(106,169,255,0.6)"; ctx.stroke();
     }
   }
-  for (const t of state.taps) {
+  for (const t of state.viewing ? [] : state.taps) {
     if (t.targetMinX != null) { ctx.strokeStyle = "rgba(245,196,0,0.9)"; ctx.lineWidth = 2; ctx.strokeRect(t.targetMinX * W, t.targetMinY * H, (t.targetMaxX - t.targetMinX) * W, (t.targetMaxY - t.targetMinY) * H); }
     ctx.strokeStyle = "#c98f00"; ctx.lineWidth = 2; const x = t.x * W, y = t.y * H;
     ctx.beginPath(); ctx.moveTo(x - 8, y - 8); ctx.lineTo(x + 8, y + 8); ctx.moveTo(x + 8, y - 8); ctx.lineTo(x - 8, y + 8); ctx.stroke();
   }
-  const trail = state.trail;
+  const trail = state.viewing ? [] : state.trail;
   for (let i = 1; i < trail.length; i++) {
     const a = trail[i - 1], b = trail[i], alpha = i / trail.length;
     ctx.strokeStyle = `rgba(200,60,30,${0.15 + 0.6 * alpha})`; ctx.lineWidth = 1.5;
@@ -174,7 +180,7 @@ function renderSessions() {
 async function viewSession(id) {
   const res = await fetch(`/api/session/${id}`); if (!res.ok) return;
   const fp = await res.json();
-  state.viewing = id;
+  state.viewing = id; state.viewFingerprint = fp;
   document.getElementById("fpTitle").innerHTML = `Fingerprint <span class="sub">session ${id.slice(0, 8)}, ${fp.navigation ? Math.round(fp.navigation.session_s) : "?"} s</span>`;
   document.getElementById("backToLive").classList.remove("hidden");
   renderFingerprint(fp); renderSessions();

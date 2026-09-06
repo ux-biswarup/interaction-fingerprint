@@ -55,6 +55,17 @@ writes `Data/derived/fingerprint_<uuid>.json`; with several sessions ends with a
 side-by-side table. Every feature is defined with units in
 `docs/product/12-FINGERPRINT-FEATURES.md`, and the thresholds used are stored in the output.
 
+## Figures and the cross-session table
+
+```bash
+python3 Analysis/fingerprint_report.py               # every session in Data/
+```
+
+Writes a one-page fingerprint card per session (scan paths, dwell, transitions, headline)
+to `Data/derived/figures/`, `Data/derived/fingerprints.csv` with one row of scalar features
+per session, and `figures/stability.png` with the within-person spread of every feature over
+the sessions whose gaze can be trusted. Needs matplotlib.
+
 ## Phase 1b: the learned eye model
 
 `eyemodel/` holds the dataset readers, eye-crop extraction, the network, training,
@@ -79,6 +90,7 @@ The dataset is never copied into this repository. See `docs/product/11-LEARNED-E
 Analysis/
 ├── evaluate_gaze.py        # judge a calibration and its sources against taps
 ├── fingerprint_session.py  # the Interaction Fingerprint of a session
+├── fingerprint_report.py   # cards, the cross-session table and the stability figure
 ├── dashboard/
 │   ├── server.py           # the desk: receives from the phone, serves the dashboard
 │   └── static/             # the dashboard page, script and styles
@@ -86,7 +98,9 @@ Analysis/
 │   ├── load.py             # sessions, gaze rows, taps, calibration frames
 │   ├── geometry.py         # the display geometry the app uses
 │   ├── gaze.py             # head-plus-eye model, fitting, CV, gaze-before-tap
-│   └── features.py         # fixations, dwell, transitions, taps, scroll, face, navigation
+│   ├── features.py         # fixations, dwell, transitions, taps, scroll, face, navigation
+│   ├── figures.py          # scan paths, dwell bars, transition graph, cards, stability
+│   └── stability.py        # cross-session table, quality filter, spread per feature
 ├── eyemodel/
 │   ├── gazecapture.py      # GazeCapture reader, crops, direction labels
 │   ├── mpiifacegaze.py     # MPIIFaceGaze reader with head pose

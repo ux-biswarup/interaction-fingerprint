@@ -166,9 +166,61 @@ What stands out, as observations only:
   inflates revisits fivefold (fixation-based count adopted); one tap landed outside any
   registered area (the header needs an area of interest).
 
-## 10. Not yet
+## 10. Eleven sessions of one person: what holds still
 
-Visualisation of a fingerprint (scan paths, dwell maps, the transition matrix as a graph);
-per-participant normalisation; features across sessions of one person; anything that
-compares a person to a population. Phase 3's exit is a fingerprint that means something to
-a reader, and the tables above are the first candidate.
+`Analysis/fingerprint_report.py` draws every session's fingerprint card (both scan paths,
+dwell bars, the transition graph, the headline numbers), writes `Data/derived/fingerprints.csv`
+with one row of scalar features per session, counts turned into per-minute rates, and
+measures the within-person spread of each feature over the sessions whose gaze can be
+trusted. Trust is decided by the data: a session in which under 40% of tracked time falls
+into fixations was recorded with a calibration that put the gaze off the screen, and its
+gaze features describe the calibration, not the person. Four of the eleven sessions of
+6 September 2026 fail that test, all of them from the morning's bad calibrations; three
+more are too short or have too few taps. Seven remain, 22 to 86 seconds each.
+
+Spread as coefficient of variation, standard deviation over mean, over those seven:
+
+| Feature | Median | CV | Reading |
+| --- | --- | --- | --- |
+| Fixation median duration | 184 ms | 0.09 | **Stable.** 167–217 ms across seven sessions, two calibrations, a day apart. |
+| Fixations per minute | 168 | 0.11 | **Stable.** 130–184. |
+| Viewing distance | 33 cm | 0.10 | Stable, though that is the arm, not the eyes. |
+| Share of tracked time in fixations | 0.68 | 0.19 | Borderline; it is also the quality measure. |
+| Tap press duration | 106 ms | 0.31 | Moves: 81–190 ms. |
+| List switches per minute | 60 | 0.32 | Moves. |
+| Scroll bursts, travel, reversals per minute | | 0.35–0.48 | Move. |
+| Blink rate | 8.4 /min | 0.46 | Moves: 3.9–15.7. |
+| Saccade median amplitude | 72 pt | 0.37 | Moves; it also depends on the layout of the screen in view. |
+| Time to first selection | 8.3 s | 0.50 | Moves. |
+| Head yaw sd | 1.4° | 0.64 | Moves: how still the head is held varies more than anything about the eyes. |
+| Contact radius | 24.2 pt | 0.00 | Uninformative: the hardware reports one of two values. |
+
+Read as observations, with one person and seven short sessions:
+
+- **The eye's rhythm is the stable part.** How long a fixation lasts and how many there
+  are per minute barely move between sessions, while everything about the hands, the
+  scrolling, the blinking and the head moves by a third to two thirds. If a fingerprint
+  has a trait component, this is where to look first, and it is the component the phone
+  measures best.
+- **The state-like part is the hands and the head.** Press duration, scroll rhythm, list
+  switching and head movement vary session to session for the same person on the same
+  task. Whether that variation carries information about the session, tiredness, hurry,
+  interest, or is noise, is exactly the Phase 4 and 5 question, and it cannot be asked
+  of one person.
+- **Contact radius is not a feature on this hardware.** It quantises to two values.
+- **The quality filter matters more than any threshold in this document.** Without it the
+  fixation rate's CV is 0.7, driven entirely by sessions where the gaze was off the screen.
+  Every cross-session comparison must apply it, and every session must report its share.
+
+The figure is `Data/derived/figures/stability.png`; the dashboard (`13-DESK-LINK.md`) shows
+the same fingerprint live and lets two sessions be compared.
+
+## 11. Phase 3 exit
+
+The roadmap's exit is "a session has a meaningful fingerprint". A session now yields a
+document of defined features with units and their thresholds, a one-page card a reader can
+take in, a place in a cross-session table, and a live view while it records. The two
+sessions in §9 and the seven in §10 read as descriptions of a person using a phone rather
+than as sensor output. Exit met, 6 September 2026. What Phase 3 does not claim: that any
+feature distinguishes people, or that any feature means anything about state. Those are
+Phases 4 and 5, and they need participants.

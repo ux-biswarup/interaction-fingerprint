@@ -25,6 +25,9 @@ public enum TargetID: String, Codable, Sendable, CaseIterable {
     case cta
     case backButton = "back"
     case listItem = "list_item"
+    /// The list screen's title bar. Not a hypothesis: it exists so that a tap or a gaze
+    /// there is attributed to something rather than falling through to the default label.
+    case header
 }
 
 /// What happened.

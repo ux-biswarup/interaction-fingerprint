@@ -88,6 +88,11 @@ flickers at borders and inflates revisits fivefold). Visualisation: the desk das
 (`13-DESK-LINK.md`) shows a session live, the gaze on the screen layout with fixations and
 taps, dwell bars, the transition matrix and the fingerprint numbers, and compares sessions
 side by side; recordings now reach `Data/` without anyone copying files.
+`Analysis/fingerprint_report.py` draws a one-page card per session and the within-person
+spread of every feature over the trustworthy sessions (`12-FINGERPRINT-FEATURES.md` §10):
+over seven sessions of one person, fixation duration and rate hold within 10%, while the
+hands, scrolling, blinking and head move by a third to two thirds. **Exit met, 6 September
+2026.** Open: the same over participants, which is Phase 4.
 
 ## Phase 4 — Exploratory study
 Control condition, tasks, 8–12 participants, qualitative + quantitative analysis.

@@ -90,6 +90,7 @@ struct ProductListView: View {
             Divider().overlay(Shop.hairline)
         }
         .background(Shop.background)
+        .areaOfInterest(.header, on: .productList)
     }
 
     private func row(_ product: Product) -> some View {
