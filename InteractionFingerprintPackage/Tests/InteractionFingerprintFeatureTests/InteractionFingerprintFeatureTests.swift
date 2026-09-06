@@ -1537,3 +1537,20 @@ func clockAnchorConverts() {
     let converted = anchor.wallClock(forUptime: 1042.5)
     #expect(abs(converted.timeIntervalSince1970 - 1_700_000_042.5) < 1e-6)
 }
+
+@Test("A gaze row that hits no area still carries the screen it was on")
+@MainActor
+func gazeOffAreaCarriesTheCurrentScreen() throws {
+    let recorder = EventRecorder()
+    recorder.start(session: makeSession())
+    recorder.screenAppeared(.productDetail, productID: "sku_101")
+    recorder.recordGaze(makeGaze(x: 0.5, y: 0.5, at: 10), screen: nil, area: nil)
+    // A pushed screen appears before the one beneath it disappears.
+    recorder.screenAppeared(.productList)
+    recorder.screenDisappeared(.productDetail, productID: "sku_101")
+    recorder.recordGaze(makeGaze(x: 0.5, y: 0.5, at: 11), screen: nil, area: nil)
+    let gaze = try #require(recorder.stop()).events.filter { $0.event == EventKind.gaze.rawValue }
+    #expect(gaze.count == 2)
+    #expect(gaze[0].screen == ScreenID.productDetail.rawValue && gaze[0].productID == "sku_101" && gaze[0].target == nil)
+    #expect(gaze[1].screen == ScreenID.productList.rawValue && gaze[1].productID == nil)
+}

@@ -54,10 +54,37 @@ the metric measures what it claims to. **Phase 1b sensing gate passed against 2 
 residues, tracked in `11-LEARNED-EYE-MODEL.md` §3: a 30–50 pt upward offset on a third of
 taps, and a leftward lean at the near end of the calibrated range.
 
+### Next steps, decided 6 September 2026
+
+1. **Phase 3, the fingerprint, starts now.** Everything before this made the numbers
+   trustworthy; nothing yet turns a session into features. First deliverable: a Python pass
+   over one session producing fixations and saccades, dwell and revisits per area of
+   interest, time from first look to tap, scroll rhythm, tap character, and blend-shape
+   summaries per screen described only as what they are. The two shopping sessions recorded
+   on the same calibration on 6 September are the first comparison.
+2. **More sessions from the researcher at different distances and postures**, sitting, lying
+   back, phone further away, without recalibrating. The two open residues, the upward offset
+   and the leftward lean, need data, not code. If the lean follows distance it is a head-pose
+   residue and head-pose normalisation of the eye crops goes on the list; if not, it is how
+   this person looks, and becomes a feature rather than a bug.
+3. **No change to the model itself yet.** It passed with margin. Head-pose normalisation
+   costs a retraining cycle and a new bundle and there is no evidence it would change a
+   decision. The GazeCapture request stays open in case phone-domain data is ever needed.
+4. **Before Phase 4 participants:** the calibration has only ever seen one face and must
+   survive a stranger; and the header region needs an area of interest, since a tap outside
+   any registered area is currently labelled a list item by default (the missing frame now
+   flags it).
+
 ## Phase 3 — Fingerprint
 Normalize events, derive features, summarize sessions, visualize fingerprints.
 
 **Exit:** a session has a meaningful fingerprint.
+
+Status, 6 September 2026: first pass built and run on the two same-calibration sessions,
+`Analysis/fingerprint_session.py`; definitions with units in `12-FINGERPRINT-FEATURES.md`,
+which also records what the first two fingerprints look like and the two instrumentation
+gaps they exposed (off-area gaze rows carried no screen; per-sample area attribution
+flickers at borders and inflates revisits fivefold). Visualisation not started.
 
 ## Phase 4 — Exploratory study
 Control condition, tasks, 8–12 participants, qualitative + quantitative analysis.

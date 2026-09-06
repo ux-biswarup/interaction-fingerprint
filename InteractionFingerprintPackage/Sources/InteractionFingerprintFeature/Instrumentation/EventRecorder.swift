@@ -32,6 +32,10 @@ public final class EventRecorder {
     private var currentArea: AreaOfInterest?
     private var currentAreaSince: TimeInterval?
     private var screenSince: [ScreenID: TimeInterval] = [:]
+    /// The screen most recently shown, so a gaze row that falls on no area still knows
+    /// where it was. Until 6 September 2026 such rows carried no screen at all, a third of
+    /// good gaze in the first sessions. See `12-FINGERPRINT-FEATURES.md`.
+    private var currentScreen: (screen: ScreenID, productID: String?)?
     private var productViewedReported: Set<String> = []
 
     public init() {}
@@ -69,6 +73,7 @@ public final class EventRecorder {
         guard isRecording else { return }
         let now = SessionClock.now
         screenSince[screen] = now
+        currentScreen = (screen, productID)
         append(FingerprintEvent(
             sequence: nextSequence(), timestamp: now, event: .screenAppear,
             screen: screen, productID: productID
@@ -80,6 +85,9 @@ public final class EventRecorder {
         let now = SessionClock.now
         let duration = screenSince[screen].map { (now - $0) * 1000 }
         screenSince[screen] = nil
+        // A pushed screen appears before the one beneath it disappears, so only the screen
+        // that is actually current is cleared.
+        if currentScreen?.screen == screen, currentScreen?.productID == productID { currentScreen = nil }
         append(FingerprintEvent(
             sequence: nextSequence(), timestamp: now, event: .screenDisappear,
             screen: screen, productID: productID, durationMs: duration
@@ -193,21 +201,24 @@ public final class EventRecorder {
 
     // MARK: Sensor events
 
-    /// One gaze sample, with the region it landed on.
+    /// One gaze sample, with the region it landed on. The screen comes from the area when
+    /// the gaze hit one and from the screen most recently shown otherwise, so every gaze
+    /// row on a screen says which screen.
     public func recordGaze(
         _ sample: FaceSample,
         screen: ScreenID?,
         area: AreaOfInterest?
     ) {
         guard isRecording else { return }
-        trackAreaTransition(to: area, at: sample.timestamp, screen: screen)
+        let resolvedScreen = screen ?? area?.screen ?? currentScreen?.screen
+        trackAreaTransition(to: area, at: sample.timestamp, screen: resolvedScreen)
         append(FingerprintEvent(
             sequence: nextSequence(),
             timestamp: sample.timestamp,
             event: .gaze,
-            screen: screen,
+            screen: resolvedScreen,
             target: area?.target,
-            productID: area?.productID,
+            productID: area?.productID ?? (screen == nil && area == nil ? currentScreen?.productID : nil),
             x: sample.gazeX,
             y: sample.gazeY,
             metrics: Self.measurementMetrics(sample).merging(Self.deviceMetrics(sample.device)) { a, _ in a },

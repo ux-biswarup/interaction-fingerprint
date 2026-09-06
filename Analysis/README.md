@@ -30,6 +30,19 @@ For every gaze source in the calibration file it prints:
   model is replayed on the session's raw rows. The tap figure is the one that matters; the
   grid has been wrong about free viewing every time it disagreed.
 
+## Compute a session's fingerprint (Phase 3)
+
+```bash
+python3 Analysis/fingerprint_session.py Data/session_<uuid>.jsonl [more sessions]
+```
+
+Prints fixations and saccades, dwell and revisits per area of interest (from the app's
+per-sample attribution and from fixations), gaze transitions, tap character with first
+look and hesitation, scroll rhythm, face and holding covariates, and navigation counts;
+writes `Data/derived/fingerprint_<uuid>.json`; with several sessions ends with a
+side-by-side table. Every feature is defined with units in
+`docs/product/12-FINGERPRINT-FEATURES.md`, and the thresholds used are stored in the output.
+
 ## Phase 1b: the learned eye model
 
 `eyemodel/` holds the dataset readers, eye-crop extraction, the network, training,
@@ -52,11 +65,13 @@ The dataset is never copied into this repository. See `docs/product/11-LEARNED-E
 
 ```text
 Analysis/
-├── evaluate_gaze.py        # the command above
+├── evaluate_gaze.py        # judge a calibration and its sources against taps
+├── fingerprint_session.py  # the Interaction Fingerprint of a session
 ├── fingerprint/
 │   ├── load.py             # sessions, gaze rows, taps, calibration frames
 │   ├── geometry.py         # the display geometry the app uses
-│   └── gaze.py             # head-plus-eye model, fitting, CV, gaze-before-tap
+│   ├── gaze.py             # head-plus-eye model, fitting, CV, gaze-before-tap
+│   └── features.py         # fixations, dwell, transitions, taps, scroll, face, navigation
 ├── eyemodel/
 │   ├── gazecapture.py      # GazeCapture reader, crops, direction labels
 │   ├── mpiifacegaze.py     # MPIIFaceGaze reader with head pose

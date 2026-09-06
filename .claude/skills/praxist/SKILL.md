@@ -23,7 +23,7 @@ a person decides.
 
 ## Interfaces the loop depends on
 
-- Stable feature definitions with units (`Research/features.md`).
+- Stable feature definitions with units (`docs/product/12-FINGERPRINT-FEATURES.md`).
 - A CLI entry point: `python -m fingerprint.evaluate --variant <id> --sessions <glob>`.
 - Deterministic outputs given the same inputs and seed.
 - Every automated run recorded with git SHA, inputs, and outputs.

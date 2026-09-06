@@ -48,7 +48,7 @@ Store parameters alongside results. On device, only the AOI hit per sample is co
 dwell per AOI, revisit count, transition matrix, share of tracked time per AOI (attention
 distribution), fixation count and mean duration, time to first fixation on the actionable
 element, and hesitation (last fixation on the target to tap). Define each with units in
-`Research/features.md`.
+`docs/product/12-FINGERPRINT-FEATURES.md`.
 
 ## Do not
 

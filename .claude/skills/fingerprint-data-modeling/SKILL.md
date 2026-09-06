@@ -73,7 +73,7 @@ dwell time per target, revisit count per target, gaze transition matrix between 
 backtracking count (`back` events), attention distribution (share of tracked time per target),
 hesitation duration (time between last gaze on an actionable target and the tap), product
 comparison count (distinct products viewed before selection). Each feature has a written
-definition with units in `Research/features.md` before it is coded.
+definition with units in `docs/product/12-FINGERPRINT-FEATURES.md` before it is coded.
 
 ## Related
 `interaction-instrumentation`, `python-pandas`, `eye-tracking-concepts`.
