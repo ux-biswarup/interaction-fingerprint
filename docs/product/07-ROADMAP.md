@@ -45,8 +45,10 @@ hand-held use is the premise and stays; the fix is a better eye-in-head estimate
 `11-LEARNED-EYE-MODEL.md`. Status, 6 September 2026: pupil landmarks tried and kept as the
 shipped source (199 pt against taps, best so far, not enough); a learned eye model trained on
 MPIIFaceGaze reaches correlation 0.97 and gain 0.96 horizontally on a person it never saw,
-against ARKit's gain of 0.2, and now runs on the phone as a fourth gaze source awaiting its
-first calibration.
+against ARKit's gain of 0.2, and runs on the phone as the shipped gaze source since its
+second calibration that morning: 22 pt held out on the grid, 133 pt against fingertips in
+free viewing, 97% of gaze on the display. Taps now carry the tapped element's frame so the
+next session judges gaze against what was tapped rather than where the finger landed.
 
 ## Phase 3 — Fingerprint
 Normalize events, derive features, summarize sessions, visualize fingerprints.

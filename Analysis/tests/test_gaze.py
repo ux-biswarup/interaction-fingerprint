@@ -83,3 +83,20 @@ def test_gaze_before_tap_ignores_rows_without_a_coordinate():
     taps = pd.DataFrame(dict(timestamp=[1.0], x=[0.5], y=[0.5 + 100 / geo.POINT_HEIGHT]))
     err, n = gz.gaze_before_tap(gaze, taps, px, py)
     assert n == 1 and abs(err - 100) < 1e-6
+
+
+def test_gaze_before_tap_to_element_is_zero_inside_the_frame_and_edge_distance_outside():
+    gaze = pd.DataFrame(dict(timestamp=np.arange(0, 2, 1 / 60)))
+    px = np.full(len(gaze), 0.3)
+    py = np.full(len(gaze), 0.5)
+    # One tap on a full-width row the gaze is inside; one on a row 100 pt below the gaze.
+    taps = pd.DataFrame(dict(
+        timestamp=[1.0, 1.5], x=[0.8, 0.8], y=[0.5, 0.5],
+        targetMinX=[0.0, 0.0], targetMaxX=[1.0, 1.0],
+        targetMinY=[0.45, 0.5 + 100 / geo.POINT_HEIGHT], targetMaxY=[0.55, 0.6 + 100 / geo.POINT_HEIGHT],
+    ))
+    err, n = gz.gaze_before_tap_to_element(gaze, taps, px, py)
+    assert n == 2 and abs(err - 50) < 1e-6  # median of 0 and 100
+    # Without the frame columns the metric declines rather than guessing.
+    err, n = gz.gaze_before_tap_to_element(gaze, taps.drop(columns=["targetMinX"]), px, py)
+    assert n == 0 and np.isnan(err)

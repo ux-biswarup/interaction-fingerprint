@@ -109,6 +109,7 @@ columns on every row.
 | Key | On | Meaning |
 | --- | --- | --- |
 | `contactRadiusPt` | `tap` | Radius of the finger's contact patch, in points. A proxy for press firmness on hardware with no force sensor, which is every current iPhone. |
+| `targetMinX`, `targetMinY`, `targetMaxX`, `targetMaxY` | `tap` | The tapped element's frame, normalised like `x` and `y`. The eyes rest on a row's label while the finger lands anywhere on the row, so gaze accuracy is judged against this frame, not the fingertip. Absent when the tap hit no registered area. |
 | `offset` | `scroll` | Content offset in points. |
 | `velocity` | `scroll` | Points per second, signed. |
 | `reversal` | `scroll` | 1 on the row where direction changed. |

@@ -54,7 +54,8 @@ public struct StudySessionView: View {
                         at: touch.location,
                         viewport: proxy.size,
                         contactArea: touch.contactRadius,
-                        pressDurationMs: touch.pressDurationMs
+                        pressDurationMs: touch.pressDurationMs,
+                        targetFrame: area?.frame
                     )
                 }
                 .frame(width: 0, height: 0)

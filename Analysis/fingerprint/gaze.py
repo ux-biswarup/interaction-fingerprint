@@ -166,5 +166,30 @@ def gaze_before_tap(gaze: pd.DataFrame, taps: pd.DataFrame, px, py, lead=(0.6, 0
     return (float(np.median(errs)) if errs else float("nan")), len(errs)
 
 
+def gaze_before_tap_to_element(gaze: pd.DataFrame, taps: pd.DataFrame, px, py, lead=(0.6, 0.1)) -> tuple[float, int]:
+    """Like `gaze_before_tap`, but the distance is to the tapped element's frame: zero when the
+    gaze rests anywhere inside it, otherwise the distance to its nearest edge, in points.
+
+    The fingertip lands wherever is convenient on a wide row while the eyes rest on its
+    label, so the point distance overstates gaze error. Uses the ``targetMin/Max`` columns
+    the app records on taps; taps without them are skipped.
+    """
+    px, py = np.asarray(px, dtype=float), np.asarray(py, dtype=float)
+    finite = np.isfinite(px) & np.isfinite(py)
+    cols = ("targetMinX", "targetMinY", "targetMaxX", "targetMaxY")
+    if not all(c in taps for c in cols):
+        return float("nan"), 0
+    errs = []
+    for _, t in taps.dropna(subset=list(cols)).iterrows():
+        w = ((gaze["timestamp"] > t["timestamp"] - lead[0]) & (gaze["timestamp"] <= t["timestamp"] - lead[1])).values & finite
+        if w.sum() < 3:
+            continue
+        gx, gy = np.median(px[w]), np.median(py[w])
+        dx = max(t["targetMinX"] - gx, 0, gx - t["targetMaxX"]) * geo.POINT_WIDTH
+        dy = max(t["targetMinY"] - gy, 0, gy - t["targetMaxY"]) * geo.POINT_HEIGHT
+        errs.append(float(np.hypot(dx, dy)))
+    return (float(np.median(errs)) if errs else float("nan")), len(errs)
+
+
 def on_display(px, py) -> float:
     return float(((px >= 0) & (px <= 1) & (py >= 0) & (py <= 1)).mean())

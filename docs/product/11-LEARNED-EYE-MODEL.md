@@ -226,13 +226,28 @@ and the head rotation, and the training entry point holds out participants by na
    The fix is one flip: the crops are now taken from the mirrored-back image
    (`EyeCropGeometry.mirrored`, `PupilDetector`), with the two eyes assigned to the model's
    left and right inputs by their position rather than by Vision's labels, and the learned
-   source now has to show a positive gain like every other. What the next calibration must
-   show for the fix to be confirmed: horizontal correlation positive and above 0.95, gain near
-   one, and the between-pass offset gone, which the evaluation script prints as the grid
-   cross-validation figure falling well below the pupil source's 41 pt. If the sign is positive
-   but the offset remains, the network's head conditioning does not transfer from a laptop at
-   half a metre to a phone at a third, and head-pose normalisation of the crops is the next
-   step.
+   source now has to show a positive gain like every other.
+
+   **Second calibration, same morning, after the flip, 796 frames, 12 targets, 30–42 cm.
+   Confirmed.** The fitter chose the learned source, head plus linear, at **22 pt held out**,
+   0.60°, worst target 39 pt: the best any calibration on this phone has scored, against 41 pt
+   for the pupil landmarks on the same frames and 79 pt for ARKit's transforms.
+
+   | Readout, eye-in-head against the truth | Horizontal r / gain | Vertical r / gain | Grid CV |
+   | --- | --- | --- | --- |
+   | ARKit eye transforms | 0.76–0.88 / 0.17–0.22 | 0.92–0.99 / 0.16–0.25 | 79 pt |
+   | Pupil landmarks | 0.85–0.95 / 0.31–0.35 | 0.95–0.96 / 0.05 | 62 pt |
+   | Learned model, un-mirrored | **+0.93–0.96 / 1.50–1.52** | **+0.99 / 1.72–1.87** | **22 pt** |
+
+   Both signs are positive, the gain is the same in the near and far pass to within a few
+   per cent, and the vertical axis, the weak one for every readout before, is now the strong
+   one at 0.99. The model reports about one and a half to two times the true rotation, which
+   the fitter absorbs; the ratio is a property of the crop scale and does not matter as long
+   as it is stable, and it was. One residue remains: within a pass, the horizontal residual
+   still correlates −0.4 to −0.5 with head direction, over a head range of only 0.06. The
+   network's head conditioning transfers imperfectly from a laptop at half a metre to a phone
+   at a third. That is the argument for head-pose normalisation of the crops if free viewing
+   demands it.
 
    **Licence note.** The bundled weights were trained on MPIIFaceGaze, which is CC BY-NC-SA
    4.0. This repository is a research prototype; anything derived from it commercially would
@@ -242,8 +257,35 @@ and the head rotation, and the training entry point holds out participants by na
    First data point, 6 September 2026, before the mirror fix: on the session recorded with
    that calibration, replaying each source's head-plus-linear model gives a gaze-before-tap
    error of 185 pt for the pupil landmarks and 260 pt for the still-mirrored learned source,
-   against 450 pt for ARKit's transforms; 13 taps. The learned figure is not meaningful until
-   the fix is calibrated.
+   against 450 pt for ARKit's transforms; 13 taps.
+
+   **Second data point, after the fix, 72 s of shopping at 29–32 cm, 15 taps, 97% of gaze on
+   the display.** Gaze-before-tap as recorded: **133 pt**, 2.2 cm, about 4° at that distance;
+   the pupil landmarks replayed on the same rows give 172 pt, ARKit's transforms 235 pt. Best
+   free-viewing figure so far, from 199 pt, and still short of 2 cm. But the per-tap table
+   says the remaining error is not what the number suggests:
+
+   - Within each pre-tap window the gaze is still to 16 pt horizontally and 11 pt
+     vertically. The error is systematic, not scatter.
+   - It grows with where the finger landed: horizontally by −189 pt per unit of screen
+     width, so a tap at the right edge of a list row has its gaze 150–180 pt to the left of
+     it, while the five taps on the small back button, where finger and eye have to agree,
+     err by 40–58 pt. On a list row the finger lands wherever is convenient, at the right,
+     and the eyes rest on the product name, which starts at 0.32 of the width; the recorded
+     gaze for those taps sits at 0.28–0.43. The fingertip is not the ground truth on a wide
+     element, and the metric has been over-stating the error by that much since the first
+     session.
+   - Vertically there is a constant −50 pt: the gaze rests above the fingertip on every tap,
+     including the back button. Part of this is the well-known touch offset, the contact patch
+     landing below the point the finger appears to cover; part may be the head-conditioning
+     residue above, since the session was at the near edge of the calibrated range and with a
+     slightly different head direction.
+
+   Taps now record the tapped element's frame (`targetMinX` to `targetMaxY`, see
+   `05-DATA-SCHEMA.md`) and the evaluation reports the distance from gaze to that frame, zero
+   inside it, beside the fingertip distance. The next session gives the honest figure. If it
+   comes in under 2 cm on the frame metric, the go decision is made on the model as it is; if
+   the vertical offset persists across sessions, head-pose normalisation of the crops follows.
 
 ## 4. What would stop it
 

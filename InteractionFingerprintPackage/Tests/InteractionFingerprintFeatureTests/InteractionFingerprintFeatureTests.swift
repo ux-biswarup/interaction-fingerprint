@@ -1409,7 +1409,8 @@ func tapCarriesTouchMetrics() throws {
     recorder.tapped(
         screen: .productDetail, target: .cta, productID: "sku_101",
         at: CGPoint(x: 196.5, y: 426), viewport: CGSize(width: 393, height: 852),
-        contactArea: 9.4, pressDurationMs: 118
+        contactArea: 9.4, pressDurationMs: 118,
+        targetFrame: CGRect(x: 0, y: 213, width: 393, height: 426)
     )
     let events = try #require(recorder.stop()).events
     let tap = try #require(events.first { $0.event == EventKind.tap.rawValue })
@@ -1417,6 +1418,10 @@ func tapCarriesTouchMetrics() throws {
     #expect(abs((tap.y ?? 0) - 0.5) < 1e-9)
     #expect(tap.durationMs == 118)
     #expect(tap.metrics["contactRadiusPt"] == 9.4)
+    // The element's frame, normalised the same way as the point.
+    #expect(tap.metrics["targetMinX"] == 0 && tap.metrics["targetMaxX"] == 1)
+    #expect(abs((tap.metrics["targetMinY"] ?? 0) - 0.25) < 1e-9)
+    #expect(abs((tap.metrics["targetMaxY"] ?? 0) - 0.75) < 1e-9)
 }
 
 @Test("Scrolling records velocity and counts direction reversals")

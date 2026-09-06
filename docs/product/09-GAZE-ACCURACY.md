@@ -149,9 +149,11 @@ and generative interfaces.
 > assumed, that the eye-in-head rotation arrives at about a fifth of its true size, and
 > that grid accuracy does not predict free viewing: measured against 43 taps as ground
 > truth, the best model structure sits at about 225 points, 3.7 cm, and the sensor's
-> free-viewing floor for this participant is currently 4° to 6°, worse than the published
-> 3.18°. The grid numbers below stand as what
-> they are; they are not the accuracy of the study data.
+> free-viewing floor for this participant was 4° to 6°, worse than the published 3.18°.
+> The learned eye model (`11-LEARNED-EYE-MODEL.md`) brought the grid to 22 pt and free
+> viewing to 133 pt against fingertips, about 4°, with most of that now attributable to the
+> eyes resting on a label while the finger lands elsewhere on the row. The grid numbers below
+> stand as what they are; they are not the accuracy of the study data.
 
 iPhone 15, iOS 26.5.2, held in the hand, accuracy measured as the offset of each target's
 mean gaze on targets held out of the fit.

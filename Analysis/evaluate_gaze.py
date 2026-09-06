@@ -86,14 +86,20 @@ def main(paths: list[str]) -> None:
                         continue
                     px, py = m.predict(sf)
                     err, n = gz.gaze_before_tap(sf, taps, px, py)
-                    line += f" | {name}: tap {err:4.0f} pt ({n}) on-display {gz.on_display(px, py):.2f}"
+                    line += f" | {name}: tap {err:4.0f} pt ({n})"
+                    elem, ne = gz.gaze_before_tap_to_element(sf, taps, px, py)
+                    if ne:
+                        line += f" element {elem:3.0f} pt"
+                    line += f" on-display {gz.on_display(px, py):.2f}"
                 print(line)
 
     for name, gaze, taps in sessions:
         px, py = gaze["x"].values, gaze["y"].values
         err, n = gz.gaze_before_tap(gaze, taps, px, py)
-        print(f"\nsession {name} as recorded by the app: gaze-before-tap {err:.0f} pt ({n} taps), on-display {gz.on_display(px, py):.2f}, "
-              f"{len(gaze)} good gaze rows")
+        elem, ne = gz.gaze_before_tap_to_element(gaze, taps, px, py)
+        element = f", to the tapped element {elem:.0f} pt ({ne} taps)" if ne else ""
+        print(f"\nsession {name} as recorded by the app: gaze-before-tap {err:.0f} pt ({n} taps){element}, "
+              f"on-display {gz.on_display(px, py):.2f}, {len(gaze)} good gaze rows")
 
 
 if __name__ == "__main__":

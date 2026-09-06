@@ -90,6 +90,11 @@ public final class EventRecorder {
     ///
     /// Contact area and press duration are cheap to capture and are behavioural signals in
     /// their own right: a hesitant tap and a decisive one differ measurably.
+    ///
+    /// The tapped element's frame is recorded too, normalised like the point. A finger lands
+    /// wherever is convenient on a wide row while the eyes rest on its label, so the distance
+    /// from gaze to the fingertip overstates gaze error; the distance to the element does
+    /// not. See `docs/product/11-LEARNED-EYE-MODEL.md` section 3, milestone 5.
     public func tapped(
         screen: ScreenID,
         target: TargetID,
@@ -97,11 +102,18 @@ public final class EventRecorder {
         at point: CGPoint,
         viewport: CGSize,
         contactArea: Double?,
-        pressDurationMs: Double?
+        pressDurationMs: Double?,
+        targetFrame: CGRect? = nil
     ) {
         guard isRecording, viewport.width > 0, viewport.height > 0 else { return }
         var metrics: [String: Double] = [:]
         if let contactArea { metrics["contactRadiusPt"] = contactArea }
+        if let targetFrame {
+            metrics["targetMinX"] = Double(targetFrame.minX) / Double(viewport.width)
+            metrics["targetMinY"] = Double(targetFrame.minY) / Double(viewport.height)
+            metrics["targetMaxX"] = Double(targetFrame.maxX) / Double(viewport.width)
+            metrics["targetMaxY"] = Double(targetFrame.maxY) / Double(viewport.height)
+        }
         append(FingerprintEvent(
             sequence: nextSequence(), timestamp: SessionClock.now, event: .tap,
             screen: screen, target: target, productID: productID,
