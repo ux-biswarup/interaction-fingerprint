@@ -40,7 +40,7 @@ And, eventually:
 
 The second question comes later.
 
-First, we need to establish that the fingerprint itself is measurable, reliable and useful.
+First, we need to establish that the fingerprint itself is measurable, reliable and useful. Where this sits among existing gaze, biometrics and attention research, and what it does and does not claim as new, is set out in [`docs/RESEARCH_MAP.md`](docs/RESEARCH_MAP.md).
 
 ---
 
@@ -734,6 +734,7 @@ That is the question this project is trying to answer.
 
 The research record is maintained alongside the code:
 
+* [`RESEARCH_MAP.md`](docs/RESEARCH_MAP.md) — the existing landscape, related open-source projects and datasets, and the precise line this project claims as its own
 * [`01-RESEARCH-THESIS.md`](docs/product/01-RESEARCH-THESIS.md)
 * [`02-INTERACTION-FINGERPRINT.md`](docs/product/02-INTERACTION-FINGERPRINT.md)
 * [`04-EXPERIMENT-PLAN.md`](docs/product/04-EXPERIMENT-PLAN.md)
