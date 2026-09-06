@@ -1587,3 +1587,66 @@ func recorderSinkSeesEveryEvent() throws {
     _ = recorder.stop()
     #expect(seen == [EventKind.sessionStart.rawValue, EventKind.screenAppear.rawValue, EventKind.gaze.rawValue, EventKind.sessionEnd.rawValue])
 }
+
+// MARK: - Study conditions
+
+@Test("A block holds each task and pace once, in an order that rotates with the day")
+func studyBlockRotates() {
+    let day0 = StudyPlan.order(forDay: 0)
+    #expect(day0.count == 4)
+    #expect(Set(day0.map { "\($0.task.rawValue)|\($0.pace.rawValue)" }).count == 4)
+    let firsts = (0..<4).map { StudyPlan.order(forDay: $0)[0] }
+    #expect(Set(firsts.map { "\($0.task.rawValue)|\($0.pace.rawValue)" }).count == 4)
+    #expect(StudyPlan.order(forDay: 4)[0].task == day0[0].task && StudyPlan.order(forDay: 4)[0].pace == day0[0].pace)
+    #expect(StudyPlan.order(forDay: -1).count == 4)
+}
+
+@Test("The search task's right answer is the cheapest product rated four or more, from the catalogue itself")
+func searchTaskAnswer() {
+    let right = StudyPlan.correctSearchProduct(in: Product.catalogue)
+    #expect(right?.id == "sku_103")
+    // The cheapest product overall is rated under four and must not be the answer.
+    let cheapest = Product.catalogue.min { $0.priceGBP < $1.priceGBP }
+    #expect(cheapest?.id == "sku_104" && cheapest?.rating ?? 5 < 4)
+}
+
+@Test("Limits and prompts follow the condition")
+func conditionLimits() {
+    let hurried = SessionCondition(participant: "P1", task: .search, pace: .hurried, posture: .sitting, light: .daylight)
+    #expect(hurried.limitSeconds == 45 && hurried.showsCountdown && hurried.endsOnSelection)
+    let browse = SessionCondition(participant: "P1", task: .browse, pace: .relaxed, posture: .lyingBack, light: .lamp)
+    #expect(browse.limitSeconds == 90 && !browse.showsCountdown && !browse.endsOnSelection)
+    #expect(browse.prompt.contains("nothing to find") && hurried.prompt.contains("rating of 4"))
+}
+
+@Test("A session record carries its condition, and one written before conditions existed still decodes")
+func sessionRecordCondition() throws {
+    let condition = SessionCondition(participant: "P2", task: .search, pace: .relaxed, posture: .standing, light: .lamp)
+    let record = SessionRecord(
+        appID: "test", appVersion: "1",
+        device: DeviceRecord(model: "iPhone", systemVersion: "26", screenPointWidth: 393, screenPointHeight: 852, displayScale: 3),
+        calibration: nil, eyeLaterality: nil, condition: condition
+    )
+    let data = try JSONEncoder().encode(record)
+    let back = try JSONDecoder().decode(SessionRecord.self, from: data)
+    #expect(back.condition == condition)
+    let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let stored = try #require(json["condition"] as? [String: Any])
+    #expect(stored["posture"] as? String == "standing" && stored["task"] as? String == "search")
+    // Older exports have no condition key at all.
+    var legacy = json
+    legacy.removeValue(forKey: "condition")
+    let old = try JSONDecoder().decode(SessionRecord.self, from: JSONSerialization.data(withJSONObject: legacy))
+    #expect(old.condition == nil)
+}
+
+@Test("The task result event carries correctness and the selection")
+@MainActor
+func taskResultEvent() throws {
+    let recorder = EventRecorder()
+    recorder.start(session: makeSession())
+    recorder.taskResult(correct: true, selected: "sku_103", timedOut: false)
+    let events = try #require(recorder.stop()).events
+    let result = try #require(events.first { $0.event == EventKind.taskResult.rawValue })
+    #expect(result.productID == "sku_103" && result.metrics["correct"] == 1 && result.metrics["timedOut"] == 0)
+}

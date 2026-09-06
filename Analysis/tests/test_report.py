@@ -45,3 +45,39 @@ def test_counts_become_per_minute_rates_in_the_table():
     fp["navigation"]["session_s"] = 30
     table = stability.table([fp])
     assert abs(table.loc["S0", "nav.backs"] - 6.0) < 1e-9  # 3 in half a minute
+
+
+
+def test_condition_effects_find_an_injected_pace_effect(tmp_path):
+    from fingerprint import conditions
+    fps = []
+    for i in range(8):
+        fp = synthetic_fingerprint(i)
+        pace = "hurried" if i % 2 else "relaxed"
+        fp["session"]["condition"] = dict(participant="P1", task="browse", pace=pace, posture="sitting", light="daylight")
+        fp["session"]["startedAtWallClock"] = 1000 + 86400 * (i // 2)
+        fp["navigation"]["taps"] = 5
+        fp["fixations"]["share_of_tracked"] = 0.7
+        fp["taps"]["median_press_ms"] = 80 if pace == "hurried" else 160 + i
+        fps.append(fp)
+    table = conditions.table(fps)
+    assert list(table["pace"]).count("hurried") == 4 and table["day"].nunique() == 4
+    usable = conditions.conditioned(table)
+    assert len(usable) == 8
+    eff = conditions.effects(usable)
+    press = eff[(eff["factor"] == "pace") & (eff["feature"] == "tap.median_press_ms")].iloc[0]
+    assert press["level_b"] == "hurried" and press["d"] < -2
+    yard = conditions.day_to_day(usable)
+    assert "tap.median_press_ms" in set(yard["feature"])
+    out = figures.effects_figure(eff, yard, tmp_path / "effects.png")
+    assert out.exists()
+
+
+def test_task_result_is_read_into_the_fingerprint():
+    gaze = gaze_path([(0.5, 0.2, 0.5, "title")])
+    ev = pd.concat([pd.DataFrame([dict(event="session_start", timestamp=99.9),
+                                  dict(event="task_result", timestamp=101.0, productID="sku_103", metrics=None, correct=1, timedOut=0),
+                                  dict(event="session_end", timestamp=101.1)]), gaze], ignore_index=True)
+    fp = ft.fingerprint({"id": "T", "condition": {"task": "search"}}, ev)
+    assert fp["task"] == dict(correct=True, timedOut=False, selected="sku_103")
+    assert fp["session"]["condition"]["task"] == "search"

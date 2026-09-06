@@ -189,6 +189,15 @@ public final class EventRecorder {
         ))
     }
 
+    /// The outcome of a study task. `selected` is the product added to the basket, if any.
+    public func taskResult(correct: Bool, selected productID: String?, timedOut: Bool) {
+        guard isRecording else { return }
+        append(FingerprintEvent(
+            sequence: nextSequence(), timestamp: SessionClock.now, event: .taskResult,
+            productID: productID, metrics: ["correct": correct ? 1 : 0, "timedOut": timedOut ? 1 : 0]
+        ))
+    }
+
     /// Fires once per product, only after the detail screen has been up long enough that a
     /// glance in passing does not count as a view.
     public func noteProductVisible(_ productID: String, since: TimeInterval) {

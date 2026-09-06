@@ -139,6 +139,46 @@ def fingerprint_card(fp: dict, path: Path) -> Path:
     return path
 
 
+def effects_figure(effects: pd.DataFrame, yardstick: pd.DataFrame, path: Path) -> Path:
+    """Standardised difference between the levels of each factor, per feature, beside the
+    day-to-day spread of the same feature under a fixed condition."""
+    if effects.empty:
+        return path
+    pivot = effects.pivot_table(index="feature", columns="factor", values="d", aggfunc="first")
+    yard = yardstick.set_index("feature")["day_cv"] if not yardstick.empty else pd.Series(dtype=float)
+    fig, (left, right) = plt.subplots(1, 2, figsize=(11, 0.3 * len(pivot) + 2), facecolor=INK,
+                                      gridspec_kw=dict(width_ratios=[1.6, 1], wspace=0.6))
+    for ax in (left, right):
+        ax.set_facecolor(INK)
+        ax.tick_params(colors=PAPER, labelsize=7)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+    image = left.imshow(pivot.to_numpy(dtype=float), cmap="coolwarm", vmin=-2, vmax=2, aspect="auto")
+    left.set_yticks(range(len(pivot.index)))
+    left.set_yticklabels(pivot.index)
+    left.set_xticks(range(len(pivot.columns)))
+    left.set_xticklabels([f"{c}" for c in pivot.columns])
+    for i, feature in enumerate(pivot.index):
+        for j, factor in enumerate(pivot.columns):
+            v = pivot.loc[feature, factor]
+            if pd.notna(v):
+                left.text(j, i, f"{v:+.1f}", ha="center", va="center", color=INK if abs(v) > 1 else PAPER, fontsize=7)
+    left.set_title("second level minus first, in within-level sd (d)", color=PAPER, fontsize=9, loc="left")
+    bar = fig.colorbar(image, ax=left, fraction=0.03, pad=0.02)
+    bar.ax.tick_params(colors=PAPER, labelsize=7)
+    values = [yard.get(f, np.nan) for f in pivot.index]
+    right.barh(range(len(pivot.index)), values, color=DIM)
+    right.set_yticks(range(len(pivot.index)))
+    right.set_yticklabels([""] * len(pivot.index))
+    right.invert_yaxis()
+    right.set_title("day-to-day spread, same condition (cv)", color=PAPER, fontsize=9, loc="left")
+    right.grid(axis="x", color="#26262c", linewidth=0.5)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=110, facecolor=INK, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
 def stability_figure(table: pd.DataFrame, stability: pd.DataFrame, path: Path) -> Path:
     """Left: each feature's spread across sessions as a coefficient of variation. Right:
     every session's features as deviations from the median, so a session that stands out

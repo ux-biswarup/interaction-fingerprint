@@ -64,7 +64,10 @@ python3 Analysis/fingerprint_report.py               # every session in Data/
 Writes a one-page fingerprint card per session (scan paths, dwell, transitions, headline)
 to `Data/derived/figures/`, `Data/derived/fingerprints.csv` with one row of scalar features
 per session, and `figures/stability.png` with the within-person spread of every feature over
-the sessions whose gaze can be trusted. Needs matplotlib.
+the sessions whose gaze can be trusted. When sessions carry a study condition
+(`docs/product/04-EXPERIMENT-PLAN.md`) it also writes `fingerprints_by_condition.csv`, the
+factor effects against day-to-day spread (`figures/effects.png`) and the search-task
+outcomes. Needs matplotlib.
 
 ## Phase 1b: the learned eye model
 
@@ -99,7 +102,8 @@ Analysis/
 │   ├── geometry.py         # the display geometry the app uses
 │   ├── gaze.py             # head-plus-eye model, fitting, CV, gaze-before-tap
 │   ├── features.py         # fixations, dwell, transitions, taps, scroll, face, navigation
-│   ├── figures.py          # scan paths, dwell bars, transition graph, cards, stability
+│   ├── figures.py          # scan paths, dwell bars, transition graph, cards, stability, effects
+│   ├── conditions.py       # features by study condition, factor effects, day-to-day yardstick
 │   └── stability.py        # cross-session table, quality filter, spread per feature
 ├── eyemodel/
 │   ├── gazecapture.py      # GazeCapture reader, crops, direction labels

@@ -19,6 +19,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
+from fingerprint import conditions  # noqa: E402
 from fingerprint import features as ft  # noqa: E402
 from fingerprint import figures  # noqa: E402
 from fingerprint import load  # noqa: E402
@@ -65,6 +66,23 @@ def main(paths: list[str]) -> None:
         print(spread.round(3).to_string(index=False))
         out = figures.stability_figure(table[ok], spread, figure_dir / "stability.png")
         print(f"  -> {out}")
+    cond = conditions.table(fingerprints)
+    cond.to_csv(derived / "fingerprints_by_condition.csv")
+    usable = conditions.conditioned(cond)
+    if len(usable) >= 4:
+        print(f"\n{len(usable)} conditioned sessions pass the quality gate; "
+              f"participants {sorted(usable['participant'].dropna().unique())}, days {usable['day'].nunique()}")
+        eff = conditions.effects(usable)
+        yard = conditions.day_to_day(usable)
+        if not eff.empty:
+            print("\nfactor effects (d = second level minus first, in within-level sd), largest first:")
+            print(eff.head(24).round(2).to_string(index=False))
+            out = figures.effects_figure(eff, yard, figure_dir / "effects.png")
+            print(f"  -> {out}")
+        outcomes = conditions.task_outcomes(usable)
+        if not outcomes.empty:
+            print("\nsearch task outcomes:")
+            print(outcomes.round(2).to_string(index=False))
     print(f"  -> {derived / 'fingerprints.csv'}")
 
 

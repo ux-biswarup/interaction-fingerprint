@@ -45,6 +45,10 @@ public enum EventKind: String, Codable, Sendable, CaseIterable {
     case areaEnter = "area_enter"
     case areaExit = "area_exit"
     case ambientLight = "ambient_light"
+    /// The outcome of a study task, written by the app at the end of a conditioned session:
+    /// `metrics.correct` 1 or 0 and `productID` the selection, so task success never has to
+    /// be re-derived from a catalogue that might have changed.
+    case taskResult = "task_result"
     /// Emitted rather than silently dropping data when the buffer cannot keep up.
     case bufferOverflow = "buffer_overflow"
 }

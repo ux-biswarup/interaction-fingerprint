@@ -99,6 +99,13 @@ Control condition, tasks, 8–12 participants, qualitative + quantitative analys
 
 **Exit:** evidence about whether fingerprint signals add useful information.
 
+Redesigned 6 September 2026 for the participants actually available: a ten-day
+repeated-measures study of the researcher, replicated on two or three others, with task,
+pace, posture and light set on purpose (`04-EXPERIMENT-PLAN.md`, protocol section). The app
+runs the block (prompt, countdown, end on selection, condition in the record, task result);
+the desk collects it; the report measures each factor's effect against day-to-day spread.
+Ready to start; no sessions recorded under the protocol yet.
+
 ## Phase 5 — Modeling
 Correlation analysis, simple predictive models, compare signal groups, assess false positives.
 

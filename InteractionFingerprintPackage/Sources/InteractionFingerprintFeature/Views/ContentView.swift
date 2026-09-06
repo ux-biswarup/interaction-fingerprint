@@ -18,6 +18,8 @@ public struct ContentView: View {
     /// Show the camera's view of the face instead of the plain screen. Debug only.
     @State private var showsCamera = false
     @State private var desk = DeskLink()
+    @State private var showsStudyPlan = false
+    @State private var studyCondition: SessionCondition?
     @Environment(\.displayScale) private var displayScale
     @Environment(\.scenePhase) private var scenePhase
 
@@ -86,9 +88,17 @@ public struct ContentView: View {
                     : nil
             )
         } else if isRunningStudy {
-            StudySessionView(tracking: tracking, desk: desk) { export in
+            StudySessionView(tracking: tracking, desk: desk, condition: studyCondition) { export in
                 isRunningStudy = false
-                if let export { lastExport = export }
+                if let export {
+                    lastExport = export
+                    if let studyCondition {
+                        StudyLog.record(studyCondition)
+                        // Back to the block so the next session is one tap away.
+                        showsStudyPlan = true
+                    }
+                }
+                studyCondition = nil
             }
         } else if let check = lateralityCheck {
             EyeLateralityView(
@@ -359,14 +369,35 @@ public struct ContentView: View {
             .disabled(!FaceTrackingSupport.isSupported)
 
             Button {
-                Task { await startStudy() }
+                showsStudyPlan = true
             } label: {
-                Text("Record a session")
+                Text("Study block")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(Instrument.reticle)
             .foregroundStyle(Instrument.ink)
+            .controlSize(.large)
+            .disabled(!FaceTrackingSupport.isSupported || tracking.model == nil)
+            .accessibilityIdentifier("study_block")
+            .sheet(isPresented: $showsStudyPlan) {
+                StudyPlanView(
+                    onStart: { condition in
+                        showsStudyPlan = false
+                        Task { await startStudy(condition: condition) }
+                    },
+                    onClose: { showsStudyPlan = false }
+                )
+            }
+
+            Button {
+                Task { await startStudy() }
+            } label: {
+                Text("Record a free session")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(Instrument.paper)
             .controlSize(.large)
             .disabled(!FaceTrackingSupport.isSupported || tracking.model == nil)
 
@@ -468,10 +499,11 @@ public struct ContentView: View {
         lateralityCheck = EyeLateralityCheck()
     }
 
-    private func startStudy() async {
+    private func startStudy(condition: SessionCondition? = nil) async {
         guard await grantCamera() else { return }
         if tracking.state != .running { tracking.start() }
         lastExport = nil
+        studyCondition = condition
         isRunningStudy = true
     }
 

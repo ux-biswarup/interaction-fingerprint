@@ -100,7 +100,12 @@ columns on every row.
 
 `session_start`, `session_end`, `screen_appear`, `screen_disappear`, `tap`, `scroll`,
 `back`, `product_viewed`, `product_selected`, `gaze`, `area_enter`, `area_exit`,
-`ambient_light`, `buffer_overflow`.
+`ambient_light`, `task_result`, `buffer_overflow`.
+
+The session record carries `condition` when the session was part of the study
+(`04-EXPERIMENT-PLAN.md`): `participant` (a code, never a name), `task` (`browse`,
+`search`), `pace` (`relaxed`, `hurried`), `posture` (`sitting`, `lying_back`, `standing`),
+`light` (`daylight`, `lamp`). Free recordings have no `condition` key.
 
 `buffer_overflow` exists so that a dataset never has an unmarked hole in it.
 
@@ -108,6 +113,7 @@ columns on every row.
 
 | Key | On | Meaning |
 | --- | --- | --- |
+| `correct`, `timedOut` | `task_result` | Written once at the end of a conditioned study session: whether the search task's selection was the catalogue's right answer (1 or 0; 1 for browse, which has no answer), and whether the time limit ended the session. `productID` on the row is the selection. |
 | `contactRadiusPt` | `tap` | Radius of the finger's contact patch, in points. A proxy for press firmness on hardware with no force sensor, which is every current iPhone. |
 | `targetMinX`, `targetMinY`, `targetMaxX`, `targetMaxY` | `tap` | The tapped element's frame, normalised like `x` and `y`. The eyes rest on a row's label while the finger lands anywhere on the row, so gaze accuracy is judged against this frame, not the fingertip. Absent when the tap hit no registered area. |
 | `offset` | `scroll` | Content offset in points. |

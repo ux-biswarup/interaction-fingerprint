@@ -390,9 +390,18 @@ def fingerprint(session: dict, events: pd.DataFrame, params: Params = Params()) 
         median_looked_first_s=float(taps["looked_first_s"].median()) if taps["looked_first_s"].notna().any() else np.nan,
         median_hesitation_s=float(taps["hesitation_s"].median()) if taps["hesitation_s"].notna().any() else np.nan,
     )
+    result = events[events["event"] == "task_result"]
+    task = None
+    if not result.empty:
+        last = result.iloc[-1]
+        task = dict(correct=bool(last.get("correct", 0) == 1) if "correct" in result else None,
+                    timedOut=bool(last.get("timedOut", 0) == 1) if "timedOut" in result else None,
+                    selected=_pid(last.get("productID")))
     return dict(
         session=dict(id=session.get("id"), appVersion=session.get("appVersion"), device=session.get("device"),
-                     startedAtWallClock=(session.get("clockAnchor") or {}).get("wallClock")),
+                     startedAtWallClock=(session.get("clockAnchor") or {}).get("wallClock"),
+                     condition=session.get("condition")),
+        task=task,
         params=asdict(params),
         tracked_s=tracked,
         screens=_records(visits),

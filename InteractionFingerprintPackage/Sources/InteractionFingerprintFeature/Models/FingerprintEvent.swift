@@ -126,6 +126,8 @@ public struct SessionRecord: Codable, Sendable, Equatable {
     /// Which physical eye each ARKit channel reported on, verified by the wink test.
     /// A session without this cannot support any claim about one eye against the other.
     public let eyeLaterality: EyeLaterality?
+    /// The study condition the session was recorded under; nil for a free recording.
+    public let condition: SessionCondition?
     public let startedAt: TimeInterval
     public var endedAt: TimeInterval?
 
@@ -137,6 +139,7 @@ public struct SessionRecord: Codable, Sendable, Equatable {
         device: DeviceRecord,
         calibration: GazeModel?,
         eyeLaterality: EyeLaterality?,
+        condition: SessionCondition? = nil,
         startedAt: TimeInterval = SessionClock.now,
         endedAt: TimeInterval? = nil
     ) {
@@ -147,6 +150,7 @@ public struct SessionRecord: Codable, Sendable, Equatable {
         self.device = device
         self.calibration = calibration
         self.eyeLaterality = eyeLaterality
+        self.condition = condition
         self.startedAt = startedAt
         self.endedAt = endedAt
     }
