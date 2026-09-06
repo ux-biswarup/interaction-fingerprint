@@ -283,9 +283,26 @@ and the head rotation, and the training entry point holds out participants by na
 
    Taps now record the tapped element's frame (`targetMinX` to `targetMaxY`, see
    `05-DATA-SCHEMA.md`) and the evaluation reports the distance from gaze to that frame, zero
-   inside it, beside the fingertip distance. The next session gives the honest figure. If it
-   comes in under 2 cm on the frame metric, the go decision is made on the model as it is; if
-   the vertical offset persists across sessions, head-pose normalisation of the crops follows.
+   inside it, beside the fingertip distance.
+
+   **Third data point, same calibration, 47 s of shopping at 28–34 cm, 12 taps, 11 with a
+   frame.** Fingertip distance 168 pt; **distance to the tapped element 28 pt median, 4.6 mm.**
+   Six of the eleven taps had the gaze resting inside the element it tapped, four were 27–54
+   pt above it, and two were misses: one back-button tap with the gaze already 106 pt to the
+   right, one row tap with the gaze 201 pt below on another row, which is either a genuine
+   error or an eye that had moved on before the finger arrived. The fingertip metric on the
+   same taps reads 56–346 pt. The pupil landmarks replayed on the same rows give 60 pt to the
+   element, ARKit's transforms 256 pt.
+
+   **Go, on the model as it is.** The 2 cm criterion, 120 pt, is met with margin on the
+   metric that measures what it claims to. Two things stay on the list rather than block:
+   the vertical residue, a gaze 30–50 pt above the element on a third of taps, which is the
+   touch offset plus whatever head dependence the model still carries, and 13% of gaze off
+   the left edge of the display in this session against 3% off all other edges, a leftward
+   lean at the near end of the calibrated range that the next few sessions will show to be
+   either a head-pose residue or a habit of looking past the phone. Head-pose normalisation
+   of the crops is the answer to the first if it persists; more sessions at more distances
+   are the answer to the second.
 
 ## 4. What would stop it
 

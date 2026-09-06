@@ -46,9 +46,13 @@ hand-held use is the premise and stays; the fix is a better eye-in-head estimate
 shipped source (199 pt against taps, best so far, not enough); a learned eye model trained on
 MPIIFaceGaze reaches correlation 0.97 and gain 0.96 horizontally on a person it never saw,
 against ARKit's gain of 0.2, and runs on the phone as the shipped gaze source since its
-second calibration that morning: 22 pt held out on the grid, 133 pt against fingertips in
-free viewing, 97% of gaze on the display. Taps now carry the tapped element's frame so the
-next session judges gaze against what was tapped rather than where the finger landed.
+second calibration that morning: 22 pt held out on the grid, and in free viewing **28 pt
+median from the gaze to the element that was tapped**, 4.6 mm, with 6 of 11 taps looked at
+directly. The fingertip distance on the same taps is 168 pt, because the eyes rest on a
+row's label while the finger lands at its right end; taps now carry the element's frame so
+the metric measures what it claims to. **Phase 1b sensing gate passed against 2 cm.** Open
+residues, tracked in `11-LEARNED-EYE-MODEL.md` §3: a 30–50 pt upward offset on a third of
+taps, and a leftward lean at the near end of the calibrated range.
 
 ## Phase 3 — Fingerprint
 Normalize events, derive features, summarize sessions, visualize fingerprints.
