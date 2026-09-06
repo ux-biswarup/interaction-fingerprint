@@ -17,6 +17,20 @@ public enum EyeCropGeometry {
         return CGRect(x: box.midX - side / 2, y: box.midY - side / 2, width: side, height: side)
     }
 
+    /// The same box in the horizontally mirrored image of the given width.
+    ///
+    /// ARKit hands the front camera's frames over mirrored, the way a selfie preview looks,
+    /// and the training images are not: they are the plain camera view. Established from
+    /// the first calibration that carried the learned source, 6 September 2026: the pupil
+    /// landmarks moved to image-right when the participant looked right, and the model's
+    /// horizontal estimate came out with a correlation of -0.98 to the truth. The mirror
+    /// also puts the head direction the model is given in the same frame as the face it
+    /// sees; without it the two disagreed and the estimate carried an offset that moved with
+    /// head pose. See `docs/product/11-LEARNED-EYE-MODEL.md` section 3.
+    nonisolated public static func mirrored(_ box: CGRect, inWidth width: CGFloat) -> CGRect {
+        CGRect(x: width - box.maxX, y: box.minY, width: box.width, height: box.height)
+    }
+
     nonisolated public static func bounds(of points: [CGPoint]) -> CGRect? {
         guard let first = points.first else { return nil }
         var minX = first.x, maxX = first.x, minY = first.y, maxY = first.y

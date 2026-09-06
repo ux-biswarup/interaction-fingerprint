@@ -32,13 +32,18 @@ For every gaze source in the calibration file it prints:
 
 ## Phase 1b: the learned eye model
 
-`eyemodel/` holds the GazeCapture reader, eye-crop extraction, the network and the training
-entry point. It needs the dataset, requested under its research licence from
-http://gazecapture.csail.mit.edu/download.php, unpacked to a folder of numbered subjects:
+`eyemodel/` holds the dataset readers, eye-crop extraction, the network, training,
+evaluation and the Core ML export. It trains on MPIIFaceGaze (direct download, CC BY-NC-SA
+4.0, cite Zhang et al. CVPRW 2017), unpacked anywhere outside the repository:
 
 ```bash
-python3 -m eyemodel.train --root /path/to/GazeCapture --limit 50 --epochs 3   # smoke run
-python3 -m eyemodel.train --root /path/to/GazeCapture --epochs 20
+python3 -m eyemodel.train --root ~/Datasets/MPIIFaceGaze/MPIIFaceGaze --epochs 20 \
+    --holdout p12,p13,p14 --augment --out ~/Datasets/eyemodel.pt
+python3 -m eyemodel.evaluate --root ~/Datasets/MPIIFaceGaze/MPIIFaceGaze \
+    --weights ~/Datasets/eyemodel.pt --subjects p12,p13,p14
+python3 -m eyemodel.export_coreml --weights ~/Datasets/eyemodel.pt --out ~/Datasets/EyeInHead.mlpackage
+xcrun coremlcompiler compile ~/Datasets/EyeInHead.mlpackage ~/Datasets/EyeInHead_compiled
+# then copy EyeInHead.mlmodelc into the package's Resources/ folder
 ```
 
 The dataset is never copied into this repository. See `docs/product/11-LEARNED-EYE-MODEL.md`.
@@ -53,10 +58,13 @@ Analysis/
 │   ├── geometry.py         # the display geometry the app uses
 │   └── gaze.py             # head-plus-eye model, fitting, CV, gaze-before-tap
 ├── eyemodel/
-│   ├── gazecapture.py      # dataset reader, crops, direction labels
+│   ├── gazecapture.py      # GazeCapture reader, crops, direction labels
+│   ├── mpiifacegaze.py     # MPIIFaceGaze reader with head pose
 │   ├── dataset.py          # torch Dataset of eye crops
 │   ├── model.py            # the two-branch network
-│   └── train.py            # training with person-level hold-out
+│   ├── train.py            # training with person-level hold-out
+│   ├── evaluate.py         # per-person correlation, gain and error
+│   └── export_coreml.py    # Core ML conversion with a parity check
 └── tests/                  # synthetic checks; no participant data
 ```
 

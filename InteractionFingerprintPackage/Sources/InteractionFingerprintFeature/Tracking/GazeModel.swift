@@ -23,12 +23,12 @@ public enum GazeSource: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// Whether the fit must show a positive gain along each axis. An eye that turns right
-    /// must map right. The pupil source's sign convention was established from the first
-    /// calibration that used it, 6 September 2026. The learned model's depends on whether
-    /// the front camera image is mirrored relative to its training images, which the first
-    /// calibration will establish; until then its sign is left to the fit.
-    var requiresPositiveGain: Bool { self != .learned }
+    /// Every source must show a positive gain along each axis: an eye that turns right must
+    /// map right. The pupil source's sign convention was established from the first
+    /// calibration that used it, 6 September 2026. The learned model's was established the
+    /// same day: the front camera image is mirrored relative to its training images, and the
+    /// crops are mirrored back before it sees them (`EyeCropGeometry.mirrored`).
+    var requiresPositiveGain: Bool { true }
 }
 
 /// Shape of the correction.

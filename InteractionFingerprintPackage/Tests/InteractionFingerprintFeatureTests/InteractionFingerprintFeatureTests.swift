@@ -918,6 +918,38 @@ func eyeCropperRendersGreyscale() throws {
     #expect(pixel(2, 2) < 60)
 }
 
+@Test("Mirroring a box swaps its distance from the two vertical edges and keeps its size")
+func eyeBoxMirroring() {
+    let box = CGRect(x: 100, y: 290, width: 70, height: 40)
+    let mirrored = EyeCropGeometry.mirrored(box, inWidth: 800)
+    #expect(mirrored == CGRect(x: 630, y: 290, width: 70, height: 40))
+    // Mirroring twice is the identity, and the box order by x reverses.
+    #expect(EyeCropGeometry.mirrored(mirrored, inWidth: 800) == box)
+    let other = CGRect(x: 500, y: 290, width: 70, height: 40)
+    #expect(EyeCropGeometry.mirrored(other, inWidth: 800).midX < mirrored.midX)
+}
+
+@Test("Cropping the mirrored image at the mirrored box yields the crop flipped left to right")
+func mirroredCropIsTheFlippedCrop() throws {
+    // A dark image with a bright patch in the left half of the eye box only.
+    let box = CGRect(x: 160, y: 290, width: 70, height: 40)
+    let dark = CIImage(color: CIColor(red: 0.05, green: 0.05, blue: 0.05)).cropped(to: CGRect(x: 0, y: 0, width: 800, height: 600))
+    let bright = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: CGRect(x: 160, y: 290, width: 35, height: 40))
+    let image = bright.composited(over: dark)
+    let cropper = EyeCropper()
+    let plain = try #require(cropper.crop(image, eye: box))
+    let flipped = try #require(cropper.crop(image.oriented(.upMirrored), eye: EyeCropGeometry.mirrored(box, inWidth: 800)))
+    func pixel(_ buffer: CVPixelBuffer, _ x: Int, _ y: Int) -> UInt8 {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        let base = CVPixelBufferGetBaseAddress(buffer)!
+        return base.load(fromByteOffset: y * CVPixelBufferGetBytesPerRow(buffer) + x, as: UInt8.self)
+    }
+    // Bright on the left of the plain crop, dark on its right; the reverse once mirrored.
+    #expect(pixel(plain, 20, 32) > 200 && pixel(plain, 44, 32) < 60)
+    #expect(pixel(flipped, 44, 32) > 200 && pixel(flipped, 20, 32) < 60)
+}
+
 @Test("The bundled learned model loads and produces a finite estimate")
 func learnedModelLoadsFromTheBundle() throws {
     let model = try #require(LearnedEyeModel())

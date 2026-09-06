@@ -63,7 +63,7 @@ def load_calibration(path: str | Path) -> tuple[dict, dict[str, pd.DataFrame]]:
     """
     doc = json.load(open(path))
     frames: dict[str, pd.DataFrame] = {}
-    for source in ("convergence", "perEye", "pupil"):
+    for source in ("convergence", "perEye", "pupil", "learned"):
         rows = [
             dict(ti=p["targetIndex"], tx=p["target"][0], ty=p["target"][1], **p[source])
             for p in doc["points"]

@@ -169,9 +169,23 @@ and the head rotation, and the training entry point holds out participants by na
    15° of spread on a laptop at half a metre; on the phone the range is a third of that, and
    what carries over is the correlation and gain, not the degrees. A 20-epoch run with crop
    jitter, brightness and contrast variation, a cosine learning-rate schedule and three people
-   held out follows. The known next improvement, if it is needed, is head-pose normalisation
-   of the crops, the standard step in the MPIIGaze line of work, which cancels head roll and
-   distance before the network sees the eye.
+   held out followed the same day. Best held-out loss at epoch 16 of 20, 7.09° over the three
+   people together; per person, none of whom the network saw:
+
+   | | p12 | p13 | p14 | Three-epoch run, p14 |
+   | --- | --- | --- | --- | --- |
+   | Horizontal correlation / gain | 0.967 / 0.91 | 0.951 / 0.97 | **0.972 / 0.98** | 0.966 / 0.96 |
+   | Vertical correlation / gain | 0.796 / 0.68 | 0.736 / 0.73 | **0.843 / 0.79** | 0.806 / 0.76 |
+   | Error, degrees | 5.95° | 8.18° | 7.22° | 6.79° |
+   | After a per-person linear correction | 5.92° | 5.70° | **5.23°** | 5.72° |
+   | Constant prediction | 21.0° | 14.2° | 17.0° | 17.0° |
+
+   The figure that transfers to the phone is the one after the per-person correction, since
+   that is what the on-device calibration fits, and it improved on every axis and every person
+   over the three-epoch weights. These are the weights bundled in the app. The known next
+   improvement, if it is needed, is head-pose normalisation of the crops, the standard step in
+   the MPIIGaze line of work, which cancels head roll and distance before the network sees the
+   eye.
 4. **On-device.** Done in first form, 6 September 2026. The checkpoint is converted with
    `eyemodel/export_coreml.py`, which refuses to save unless Core ML and PyTorch agree on the
    same inputs to 1e-3, compiled with `coremlcompiler`, and bundled in the package as a 424 KB
@@ -179,17 +193,57 @@ and the head rotation, and the training entry point holds out participants by na
    with exactly the training geometry, using the eye contours the pupil detector already
    has, and `LearnedEyeModel` runs the network beside the landmarks on the same frame. Its
    estimate is recorded on every gaze row (`learnedU`, `learnedV`), carried in the
-   calibration frames, and offered to the fitter as `GazeSource.learned`, sign left to the
-   fit until the first calibration establishes whether the front camera image is mirrored
-   relative to the training images. The bundled weights are from the three-epoch run; they
-   are replaced by the best checkpoint of the 20-epoch run when it finishes. Timing on the
-   iPhone 15 is measured by the next session's sample rate.
+   calibration frames, and offered to the fitter as `GazeSource.learned`. The bundled weights
+   are the epoch-16 checkpoint of the 20-epoch run above. On the iPhone 15 the tracker held
+   60 Hz with the model running, and the estimate refreshed 31 times a second, the rate of
+   the landmark detector it shares a frame with.
+
+   **First calibration with the learned source, 6 September 2026, 803 frames, 12 targets,
+   27–38 cm.** The fitter chose the pupil landmarks at 41 pt held out and rejected the
+   learned source at 122 pt. The frames show why, and it is not the network:
+
+   | Readout, eye-in-head against the truth | Horizontal r / gain | Vertical r / gain |
+   | --- | --- | --- |
+   | ARKit eye transforms | 0.93 / 0.15–0.19 | 0.99 / 0.19–0.26 |
+   | Pupil landmarks | 0.89–0.95 / 0.30 | 0.96 / 0.04–0.06 |
+   | Learned model, as bundled that morning | **−0.98 / 1.27–1.73** | **0.97 / 0.31–0.39** |
+
+   The learned model carries the strongest horizontal signal of any readout by a wide margin,
+   and it carries it with the sign reversed. Within one calibration pass it is very clean:
+   in the far pass the estimate is a straight line in the true angle with a residual scatter
+   of 0.011 against a span of 0.35. Between the two passes, though, the line's offset moves,
+   by 0.06 horizontally and 0.05 vertically in the model's units, and what changed between
+   the passes is the head's direction, not the eyes'. Both facts have one cause. ARKit hands
+   the front camera's frames over mirrored, the way a selfie preview looks, while the training
+   images are the plain camera view. The pupil landmarks prove the mirror independently: they
+   move to image-right when the participant looks right, which a camera view cannot do. A
+   mirrored eye reads as rotated the other way, hence the sign; and the head direction the
+   model is given, which is in the true frame, disagrees with the face it sees, hence an offset
+   that moves with head pose. The fitter's correction has no head terms by design (§11 of
+   `10-MOTION-FUSION.md`), so an offset that moves with the head cannot be fitted away, and
+   the source scored badly despite its correlation.
+
+   The fix is one flip: the crops are now taken from the mirrored-back image
+   (`EyeCropGeometry.mirrored`, `PupilDetector`), with the two eyes assigned to the model's
+   left and right inputs by their position rather than by Vision's labels, and the learned
+   source now has to show a positive gain like every other. What the next calibration must
+   show for the fix to be confirmed: horizontal correlation positive and above 0.95, gain near
+   one, and the between-pass offset gone, which the evaluation script prints as the grid
+   cross-validation figure falling well below the pupil source's 41 pt. If the sign is positive
+   but the offset remains, the network's head conditioning does not transfer from a laptop at
+   half a metre to a phone at a third, and head-pose normalisation of the crops is the next
+   step.
 
    **Licence note.** The bundled weights were trained on MPIIFaceGaze, which is CC BY-NC-SA
    4.0. This repository is a research prototype; anything derived from it commercially would
    need a model trained on differently licensed data, and any publication cites Zhang,
    Sugano, Fritz and Bulling, CVPRW 2017.
 5. **Judgement.** Recalibrate, record sessions, gaze-before-tap. Go or no-go against 2 cm.
+   First data point, 6 September 2026, before the mirror fix: on the session recorded with
+   that calibration, replaying each source's head-plus-linear model gives a gaze-before-tap
+   error of 185 pt for the pupil landmarks and 260 pt for the still-mirrored learned source,
+   against 450 pt for ARKit's transforms; 13 taps. The learned figure is not meaningful until
+   the fix is calibrated.
 
 ## 4. What would stop it
 

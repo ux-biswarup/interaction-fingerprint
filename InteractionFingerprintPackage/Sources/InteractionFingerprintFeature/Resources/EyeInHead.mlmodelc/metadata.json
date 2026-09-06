@@ -89,7 +89,7 @@
       "com.github.apple.coremltools.version" : "9.0",
       "com.github.apple.coremltools.source_dialect" : "TorchScript"
     },
-    "generatedClassName" : "EyeInHead_smoke",
+    "generatedClassName" : "EyeInHead_run2",
     "method" : "predict"
   }
 ]

@@ -158,18 +158,22 @@ actor PupilDetector {
             x: (left.x + right.x) / 2, y: (left.y + right.y) / 2, quarterTurned: quarterTurned
         )
 
-        // The learned model sees the same upright image the landmarks were found in. Vision
-        // and Core Image agree on a bottom-left origin, so the contour bounds crop directly.
+        // The learned model sees the upright image the landmarks were found in, mirrored back
+        // into the plain camera view its training images are in (see `EyeCropGeometry.mirrored`).
+        // Vision and Core Image agree on a bottom-left origin, so the contour bounds crop
+        // directly once mirrored the same way. The model names its inputs by image side, and
+        // which eye lands on which side is decided by position rather than by Vision's labels.
         var learnedU: Double?
         var learnedV: Double?
         if let learned,
-           let leftBox = EyeCropGeometry.bounds(of: leftEye.pointsInImage(imageSize: size)),
-           let rightBox = EyeCropGeometry.bounds(of: rightEye.pointsInImage(imageSize: size)) {
-            let image = CIImage(cvPixelBuffer: buffer).oriented(orientation)
-            // Vision's "left" is the participant's left, on the right of the image. The model
-            // names its inputs by image side, so the two are swapped here.
-            if let imageLeft = cropper.crop(image, eye: rightBox),
-               let imageRight = cropper.crop(image, eye: leftBox),
+           let firstBox = EyeCropGeometry.bounds(of: leftEye.pointsInImage(imageSize: size)),
+           let secondBox = EyeCropGeometry.bounds(of: rightEye.pointsInImage(imageSize: size)) {
+            let image = CIImage(cvPixelBuffer: buffer).oriented(orientation).oriented(.upMirrored)
+            let boxes = [firstBox, secondBox]
+                .map { EyeCropGeometry.mirrored($0, inWidth: size.width) }
+                .sorted { $0.midX < $1.midX }
+            if let imageLeft = cropper.crop(image, eye: boxes[0]),
+               let imageRight = cropper.crop(image, eye: boxes[1]),
                let estimate = learned.predict(leftEye: imageLeft, rightEye: imageRight, headU: head.u, headV: head.v) {
                 learnedU = estimate.u
                 learnedV = estimate.v

@@ -22,18 +22,21 @@ from fingerprint import load  # noqa: E402
 
 pd.set_option("display.width", 160)
 
-SESSION_COLUMNS = {"convergence": ("convergenceU", "convergenceV"), "perEye": ("perEyeU", "perEyeV"), "pupil": (None, None)}
+SESSION_COLUMNS = {"convergence": ("convergenceU", "convergenceV"), "perEye": ("perEyeU", "perEyeV")}
+# Head-independent readouts: the session row stores eye-in-head, the gaze is head plus that.
+EYE_IN_HEAD_COLUMNS = {"pupil": ("pupilU", "pupilV"), "learned": ("learnedU", "learnedV")}
 
 
 def session_frame(gaze: pd.DataFrame, source: str) -> pd.DataFrame | None:
     g = gaze.rename(columns={"headForwardU": "headU", "headForwardV": "headV"})
     if "headU" not in g:
         return None
-    if source == "pupil":
-        if "pupilU" not in g:
+    if source in EYE_IN_HEAD_COLUMNS:
+        cu, cv = EYE_IN_HEAD_COLUMNS[source]
+        if cu not in g:
             return None
-        g = g.dropna(subset=["pupilU", "pupilV"]).copy()
-        g["u"], g["v"] = g["headU"] + g["pupilU"], g["headV"] + g["pupilV"]
+        g = g.dropna(subset=[cu, cv]).copy()
+        g["u"], g["v"] = g["headU"] + g[cu], g["headV"] + g[cv]
     else:
         cu, cv = SESSION_COLUMNS[source]
         if cu not in g:
