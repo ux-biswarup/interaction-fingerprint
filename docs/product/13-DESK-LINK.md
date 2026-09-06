@@ -24,6 +24,28 @@ on the desktop and so that no file ever has to be copied off the phone by hand.
   network. The phone browses for it. No address is typed anywhere. The instrument screen
   shows the link's state and a switch to turn it off.
 
+### The dashboard, second form (6 September 2026)
+
+The first page was a monitor; this one is a record. A sidebar lists **Live** and then every
+session on disk grouped by participant code (free recordings last), each row with its day
+and time, length, condition and task outcome, and a dot for the gaze quality gate. Choosing
+a session shows:
+
+- **The record card**: participant, task and pace, posture and light, date and time, length
+  and tracked gaze, quality-gate share, calibration in force with its accuracy, device and
+  iOS version, task outcome and the product chosen. Everything a lab notebook would hold.
+- **The screen with replay**: the session plays back on the phone drawing at 1×, 2× or 4×
+  with a scrubber, the gaze trail and dot, fixations appearing as they were made, taps with
+  the element they hit, and the screen and area under the gaze named as it goes.
+- **The fingerprint** of the whole session, with a *Compare with…* menu that puts any other
+  session's scalars beside it and marks the ones that differ by more than 30%.
+- **The timeline** in plain language: "Opened Lumen Desk Lamp", "Tapped Add to basket ·
+  looked at it 1.1 s before", "Task completed correctly", with times from the start.
+
+While a session is being inspected and the phone starts recording, a banner offers *Go
+live*; the live view is no longer silently suppressed, which is what made the fingerprint
+panel look empty during the first study block.
+
 ## 2. What it does not do
 
 - It never leaves the local network. There is no server, no account, no cloud. The Mac and

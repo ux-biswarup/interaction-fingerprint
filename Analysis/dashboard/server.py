@@ -85,9 +85,44 @@ class Desk:
 
     @staticmethod
     def summary(fp: dict) -> dict:
+        """What the sidebar and the record card need, without the sample tables."""
         flat = ft.flatten(fp)
         clean = {k: (None if isinstance(v, float) and v != v else v) for k, v in flat.items()}
-        return dict(id=fp["session"]["id"], startedAt=fp["session"].get("startedAtWallClock"), flat=clean)
+        session = fp["session"]
+        calibration = session.get("calibration") or {}
+        return dict(
+            id=session["id"], startedAt=session.get("startedAtWallClock"), flat=clean,
+            condition=session.get("condition"), device=session.get("device"),
+            calibration=dict(source=calibration.get("source"), accuracyPoints=calibration.get("accuracyPoints"),
+                             accuracyDegrees=calibration.get("accuracyDegrees")) if calibration else None,
+            task=fp.get("task"), duration_s=fp["navigation"].get("session_s"), tracked_s=fp.get("tracked_s"),
+            participant=(session.get("condition") or {}).get("participant"),
+        )
+
+    def replay_document(self, sid: str) -> dict | None:
+        """A session's events compacted for replay: gaze as time, position and quality,
+        the interaction events whole."""
+        path = self.data / f"session_{sid}.jsonl"
+        if not path.exists():
+            return None
+        rows = []
+        with path.open() as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                kind = e.get("event")
+                if kind == "gaze":
+                    rows.append(dict(event="gaze", timestamp=e.get("timestamp"), x=e.get("x"), y=e.get("y"), quality=e.get("quality"),
+                                     screen=e.get("screen"), target=e.get("target"), productID=e.get("productID")))
+                elif kind in ("area_enter", "area_exit", "ambient_light"):
+                    continue
+                else:
+                    e.pop("signals", None)
+                    rows.append(e)
+        fp = self.fingerprint_document(sid)
+        return dict(id=sid, rows=rows, fingerprint=self.trim(fp) if fp else None, session=(fp or {}).get("session"))
 
     def fingerprint_document(self, sid: str) -> dict | None:
         path = self.derived / f"fingerprint_{sid}.json"
@@ -254,6 +289,10 @@ async def ingest(request: web.Request) -> web.WebSocketResponse:
                 continue
             kind, payload = message.get("type"), message.get("payload")
             if kind == "session_start" and isinstance(payload, dict):
+                if desk.live is not None:
+                    # A start while another session is open: the phone was cut off before
+                    # its end message. Close the old one so nothing is lost.
+                    desk.end_session(None)
                 desk.start_session(payload)
                 await broadcast(desk, dict(type="session_start", session=payload, areas=desk.areas))
             elif kind == "events" and isinstance(payload, list):
@@ -327,6 +366,14 @@ async def api_session(request: web.Request) -> web.Response:
     return web.json_response(fp, dumps=lambda o: json.dumps(o, default=float))
 
 
+async def api_replay(request: web.Request) -> web.Response:
+    desk: Desk = request.app["desk"]
+    doc = desk.replay_document(request.match_info["sid"])
+    if doc is None:
+        raise web.HTTPNotFound()
+    return web.json_response(doc, dumps=lambda o: json.dumps(o, default=float))
+
+
 async def index(request: web.Request):
     """The page for browsers; the phone's socket when the request is a WebSocket upgrade.
 
@@ -365,7 +412,9 @@ def local_addresses() -> list[str]:
         probe.close()
     except OSError:
         pass
-    return sorted(a for a in addresses if not a.startswith("127."))
+    # Link-local addresses (USB tethering, self-assigned) come and go and break the
+    # advertisement when they do; the phone reaches the desk over Wi-Fi.
+    return sorted(a for a in addresses if not a.startswith(("127.", "169.254.")))
 
 
 def advertise(port: int):
@@ -401,6 +450,7 @@ def make_app(data_dir: Path) -> web.Application:
     app.router.add_get("/live", live)
     app.router.add_get("/api/sessions", api_sessions)
     app.router.add_get("/api/session/{sid}", api_session)
+    app.router.add_get("/api/session/{sid}/replay", api_replay)
     app.router.add_static("/static", Path(__file__).parent / "static")
 
     async def start_ticker(app):

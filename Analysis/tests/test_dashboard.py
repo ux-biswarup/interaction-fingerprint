@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -99,3 +100,24 @@ async def test_a_short_streamed_session_is_requested_as_a_file(client):
         await phone.send_str(json.dumps(dict(type="have", payload=dict(sessions=["SHORT"], calibrations=[]))))
         assert json.loads((await phone.receive()).data)["sessions"] == []
     assert len(json.loads((data / "session_SHORT.json").read_text())["events"]) == 500
+
+
+async def test_replay_document_compacts_gaze_and_keeps_interaction_events(client):
+    c, data = client
+    async with c.ws_connect("/ingest") as phone:
+        session = dict(id="REPLAY", condition=dict(participant="P1", task="search", pace="hurried", posture="sitting", light="lamp"))
+        await phone.send_str(json.dumps(dict(type="session_start", payload=session)))
+        events = [dict(event="screen_appear", sequence=1, timestamp=100.0, screen="product_list")]
+        events += [gaze(100.0 + i / RATE, 0.5, 0.3) for i in range(40)]
+        events += [dict(event="area_enter", sequence=99, timestamp=100.5, screen="product_list", target="list_item"),
+                   dict(event="tap", sequence=100, timestamp=100.7, screen="product_list", target="list_item", x=0.5, y=0.3, metrics=dict(contactRadiusPt=20))]
+        await phone.send_str(json.dumps(dict(type="events", payload=events)))
+        await phone.send_str(json.dumps(dict(type="session_end", payload=session, eventCount=42)))
+        await asyncio.sleep(0.2)
+    doc = await (await c.get("/api/session/REPLAY/replay")).json()
+    kinds = [r["event"] for r in doc["rows"]]
+    assert kinds.count("gaze") == 40 and "tap" in kinds and "area_enter" not in kinds
+    assert set(doc["rows"][1]) == {"event", "timestamp", "x", "y", "quality", "screen", "target", "productID"}
+    sessions = await (await c.get("/api/sessions")).json()
+    assert sessions[0]["participant"] == "P1" and sessions[0]["condition"]["pace"] == "hurried"
+    assert (await c.get("/api/session/NOPE/replay")).status == 404

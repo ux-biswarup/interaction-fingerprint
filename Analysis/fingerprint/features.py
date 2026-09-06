@@ -400,7 +400,9 @@ def fingerprint(session: dict, events: pd.DataFrame, params: Params = Params()) 
     return dict(
         session=dict(id=session.get("id"), appVersion=session.get("appVersion"), device=session.get("device"),
                      startedAtWallClock=(session.get("clockAnchor") or {}).get("wallClock"),
-                     condition=session.get("condition")),
+                     condition=session.get("condition"),
+                     calibration={k: (session.get("calibration") or {}).get(k) for k in ("source", "accuracyPoints", "accuracyDegrees")}
+                     if session.get("calibration") else None),
         task=task,
         params=asdict(params),
         tracked_s=tracked,
