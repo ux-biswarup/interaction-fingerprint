@@ -82,3 +82,20 @@ async def test_a_websocket_at_the_root_is_the_phone(client):
         await browser.receive()
         await phone.send_str(json.dumps(dict(type="have", payload=dict(sessions=["X"], calibrations=[]))))
         assert json.loads((await phone.receive()).data)["sessions"] == ["X"]
+
+
+async def test_a_short_streamed_session_is_requested_as_a_file(client):
+    c, data = client
+    async with c.ws_connect("/ingest") as phone:
+        session = dict(id="SHORT")
+        await phone.send_str(json.dumps(dict(type="session_start", payload=session)))
+        await phone.send_str(json.dumps(dict(type="events", payload=[gaze(1 + i / RATE, 0.5, 0.5) for i in range(10)])))
+        await phone.send_str(json.dumps(dict(type="session_end", payload=session, eventCount=500)))
+        reply = json.loads((await phone.receive()).data)
+        assert reply["type"] == "missing" and reply["sessions"] == ["SHORT"]
+        # The phone answers with the file, which replaces the short copy.
+        events = [dict(event="session_start", sequence=1, timestamp=1.0)] + [gaze(1 + i / RATE, 0.5, 0.5) for i in range(499)]
+        await phone.send_str(json.dumps(dict(type="upload", kind="session", id="SHORT", payload={"session": session, "events": events})))
+        await phone.send_str(json.dumps(dict(type="have", payload=dict(sessions=["SHORT"], calibrations=[]))))
+        assert json.loads((await phone.receive()).data)["sessions"] == []
+    assert len(json.loads((data / "session_SHORT.json").read_text())["events"]) == 500

@@ -39,6 +39,7 @@ public final class DeskLink {
 
     public private(set) var state: State = .off
     public private(set) var sentEvents = 0
+    private var sessionEvents = 0
     public private(set) var uploads = 0
     public var queuedMessages: Int { outbox.count }
 
@@ -58,6 +59,9 @@ public final class DeskLink {
     private var pendingEvents: [FingerprintEvent] = []
     private var flusher: Task<Void, Never>?
     private var sending = false
+    /// One retry chain at a time. Each failure used to start its own, and two of them
+    /// reaching an empty `connection` in the same tick opened two sockets to the desk.
+    private var retryScheduled = false
 
     public init(enabled: Bool? = nil) {
         let stored = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool
@@ -109,7 +113,10 @@ public final class DeskLink {
     }
 
     private func found(_ results: Set<NWBrowser.Result>) {
-        guard connection == nil, let result = results.first else { return }
+        guard connection == nil, isEnabled else { return }
+        // Prefer a result that is not tied to one interface, so the address the phone
+        // resolves is the one that survives a Wi-Fi hop.
+        guard let result = results.first(where: { $0.interfaces.isEmpty }) ?? results.first else { return }
         let name: String
         if case .service(let serviceName, _, _, _) = result.endpoint { name = serviceName } else { name = "desk" }
         connect(to: result.endpoint, named: name)
@@ -156,9 +163,13 @@ public final class DeskLink {
     }
 
     private func retryLater() {
+        guard !retryScheduled else { return }
+        retryScheduled = true
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
-            guard let self, self.isEnabled, self.connection == nil else { return }
+            guard let self else { return }
+            self.retryScheduled = false
+            guard self.isEnabled, self.connection == nil else { return }
             if let results = self.browser?.browseResults, !results.isEmpty {
                 self.found(results)
             } else {
@@ -182,16 +193,22 @@ public final class DeskLink {
     // MARK: What the recorder tells the link
 
     public func sessionStarted(_ session: SessionRecord) {
+        sessionEvents = 0
         enqueue(DeskMessage.envelope(type: "session_start", payload: try? Self.encoder.encode(session)))
     }
 
     public func record(_ event: FingerprintEvent) {
         pendingEvents.append(event)
+        sessionEvents += 1
     }
 
+    /// Sent after the phone has written its own files. Carries the event count so a desk
+    /// whose streamed copy is short, because the link dropped batches, asks for the file.
     public func sessionEnded(_ session: SessionRecord) {
         flushPendingEvents()
-        enqueue(DeskMessage.envelope(type: "session_end", payload: try? Self.encoder.encode(session)))
+        enqueue(DeskMessage.envelope(
+            type: "session_end", payload: try? Self.encoder.encode(session), extra: "\"eventCount\":\(sessionEvents)"
+        ))
     }
 
     public func calibrationSaved(_ document: SessionExporter.CalibrationDocument) {
@@ -328,8 +345,10 @@ public final class DeskLink {
 /// The wire envelope: `{"type": "...", "payload": ...}` with the payload's own JSON inserted
 /// verbatim, so a five megabyte session document is not decoded and re-encoded on the phone.
 public enum DeskMessage {
-    nonisolated public static func envelope(type: String, payload: Data?) -> Data {
-        var data = Data("{\"type\":\"\(type)\",\"payload\":".utf8)
+    nonisolated public static func envelope(type: String, payload: Data?, extra: String? = nil) -> Data {
+        var data = Data("{\"type\":\"\(type)\",".utf8)
+        if let extra { data.append(Data("\(extra),".utf8)) }
+        data.append(Data("\"payload\":".utf8))
         data.append(payload ?? Data("null".utf8))
         data.append(Data("}".utf8))
         return data

@@ -261,7 +261,15 @@ async def ingest(request: web.Request) -> web.WebSocketResponse:
                 rows = [desk.compact_gaze(e) if e.get("event") == "gaze" else e for e in payload]
                 await broadcast(desk, dict(type="events", rows=rows, eventCount=len(desk.live["events"]) if desk.live else 0))
             elif kind == "session_end":
+                streamed = len(desk.live["events"]) if desk.live else 0
                 fp = desk.end_session(payload if isinstance(payload, dict) else None)
+                expected = message.get("eventCount")
+                sid = (payload or {}).get("id") if isinstance(payload, dict) else None
+                if sid and isinstance(expected, int) and streamed < expected:
+                    # The link dropped batches; the phone has the whole file.
+                    log.info("session %s streamed %d of %d events, asking for the file", sid[:8], streamed, expected)
+                    (desk.data / f"session_{sid}.json").unlink(missing_ok=True)
+                    await ws.send_str(json.dumps(dict(type="missing", sessions=[sid], calibrations=[])))
                 await broadcast(desk, dict(type="session_end", fingerprint=desk.trim(fp) if fp else None,
                                            sessions=sorted(desk.summaries.values(), key=lambda s: s.get("startedAt") or 0, reverse=True)))
             elif kind == "calibration" and isinstance(payload, dict):
